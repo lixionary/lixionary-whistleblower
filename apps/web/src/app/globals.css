@@ -538,6 +538,102 @@ textarea {
   padding: 14px;
   border-radius: var(--radius-md);
 }
+.suite .receipt-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.suite .receipt-field dd {
+  margin-bottom: 0;
+  flex: 1;
+}
+.suite .case-id {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  padding: 14px;
+  border-radius: var(--radius-md);
+  color: var(--ink);
+}
+.suite .copy-btn {
+  padding: 8px 14px;
+  font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.suite .receipt-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 16px 0;
+}
+.markdown-content {
+  line-height: 1.6;
+}
+.markdown-content p {
+  margin: 0.5rem 0;
+}
+.markdown-content p:first-child {
+  margin-top: 0;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.markdown-content ul {
+  list-style-type: disc;
+}
+.markdown-content ol {
+  list-style-type: decimal;
+}
+.markdown-content li {
+  margin: 0.25rem 0;
+}
+.markdown-content blockquote {
+  border-left: 3px solid var(--line);
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  color: var(--muted);
+}
+.markdown-content code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--sunken);
+  padding: 0.15em 0.35em;
+  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--line);
+}
+.markdown-content pre {
+  background: var(--sunken);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.markdown-content pre code {
+  background: transparent;
+  padding: 0;
+  border: none;
+  font-size: 0.85em;
+}
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 0.75rem 0 0.25rem;
+  font-weight: 600;
+  color: var(--ink);
+}
 .suite .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(250px, 100%), 1fr));

@@ -9,7 +9,10 @@ import {
 } from "@whistle/shared";
 import {
   checkSecret,
+  checkNormalizedSecret,
   hashSecret,
+  normalizeSecret,
+  generateCrockford,
   token,
   digest,
   seal,
@@ -87,8 +90,8 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
     const id = hex
       ? `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`
       : randomUUID();
-    const pin = retry?.pin ?? token(),
-      recoveryCode = retry?.recoveryCode ?? token();
+    const pin = retry?.pin ?? generateCrockford(2, 4),
+      recoveryCode = retry?.recoveryCode ?? generateCrockford(4, 4);
     const row = await db.transaction(async (tx) => {
       if (submissionHash) {
         const [erased] = await rows(
@@ -106,8 +109,8 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
         >(tx, sql`select * from cases where submission_hash=${submissionHash}`);
         if (existing) {
           if (
-            !(await checkSecret(existing.pin_hash, pin)) ||
-            !(await checkSecret(existing.recovery_hash, recoveryCode))
+            !(await checkNormalizedSecret(existing.pin_hash, pin)) ||
+            !(await checkNormalizedSecret(existing.recovery_hash, recoveryCode))
           )
             throw new HttpError(
               409,
@@ -146,7 +149,7 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
       });
       const [r] = await rows<CaseRow>(
         tx,
-        sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(pin)},${await hashSecret(recoveryCode)},${submissionHash},${seal({ ...v, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
+        sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(normalizeSecret(pin))},${await hashSecret(normalizeSecret(recoveryCode))},${submissionHash},${seal({ ...v, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
       );
       await audit(tx, "reporter", "report_submitted", id, {
         policyVersion: s.version,
@@ -171,7 +174,7 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
       db,
       sql`select * from cases where case_code=${v.caseCode}`,
     );
-    if (!(await checkSecret(r?.pin_hash, v.pin)))
+    if (!(await checkNormalizedSecret(r?.pin_hash, v.pin)))
       throw new HttpError(401, "Invalid credentials", "invalid_credentials");
     await createReporterSession(req, reply, r!);
     return { ok: true };
@@ -350,23 +353,23 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
     const v = z
       .object({
         caseCode: credentials.shape.caseCode,
-        recoveryCode: z.string().min(20).max(200),
+        recoveryCode: z.string().min(8).max(200),
       })
       .parse(req.body);
     if (!(await limiter.hit("recover:" + digest(v.caseCode), 5, 900)))
       throw new HttpError(429, "Limit", "rate_limit");
-    const pin = token(),
-      recoveryCode = token();
+    const pin = generateCrockford(2, 4),
+      recoveryCode = generateCrockford(4, 4);
     const row = await db.transaction(async (tx) => {
       const [r] = await rows<CaseRow & { recovery_hash: string }>(
         tx,
         sql`select * from cases where case_code=${v.caseCode} for update`,
       );
-      if (!(await checkSecret(r?.recovery_hash, v.recoveryCode)))
+      if (!(await checkNormalizedSecret(r?.recovery_hash, v.recoveryCode)))
         throw new HttpError(401, "Invalid credentials", "invalid_credentials");
       const [next] = await rows<CaseRow>(
         tx,
-        sql`update cases set pin_hash=${await hashSecret(pin)},recovery_hash=${await hashSecret(recoveryCode)},secret_version=secret_version+1 where id=${r!.id} returning *`,
+        sql`update cases set pin_hash=${await hashSecret(normalizeSecret(pin))},recovery_hash=${await hashSecret(normalizeSecret(recoveryCode))},secret_version=secret_version+1 where id=${r!.id} returning *`,
       );
       await rows(tx, sql`delete from reporter_sessions where case_id=${r!.id}`);
       await audit(tx, "reporter", "reporter_access_recovered", r!.id);
@@ -376,12 +379,12 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
     return { caseCode: row.case_code, pin, recoveryCode };
   });
   app.post("/rotate", { preHandler: requireReporter }, async (req, reply) => {
-    const pin = token(),
-      recoveryCode = token();
+    const pin = generateCrockford(2, 4),
+      recoveryCode = generateCrockford(4, 4);
     const row = await db.transaction(async (tx) => {
       const [r] = await rows<CaseRow>(
         tx,
-        sql`update cases set pin_hash=${await hashSecret(pin)},recovery_hash=${await hashSecret(recoveryCode)},secret_version=secret_version+1 where id=${req.reporter!.id} and secret_version=${req.reporter!.secret_version} returning *`,
+        sql`update cases set pin_hash=${await hashSecret(normalizeSecret(pin))},recovery_hash=${await hashSecret(normalizeSecret(recoveryCode))},secret_version=secret_version+1 where id=${req.reporter!.id} and secret_version=${req.reporter!.secret_version} returning *`,
       );
       await rows(
         tx,

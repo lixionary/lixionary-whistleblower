@@ -37,8 +37,8 @@ export const employeeQuerySchema = z.object({
   state: z.enum(["pending", "approved", "rejected"]).default("pending"),
 });
 export const submissionSecretsSchema = z.object({
-  pin: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  recoveryCode: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  pin: z.string().trim().min(6).max(100),
+  recoveryCode: z.string().trim().min(8).max(100),
   submissionToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
 });
 export type EmployeeInput = z.infer<typeof employeeSchema>;

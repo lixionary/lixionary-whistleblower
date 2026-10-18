@@ -14,6 +14,7 @@ import {
   digest,
   capability,
   token,
+  generateCrockford,
   verifyCapability,
 } from "@whistle/runtime";
 import { defaultSettings } from "@whistle/shared";
@@ -129,8 +130,8 @@ async function call(
       };
     };
     payload.submission ??= {
-      pin: token(),
-      recoveryCode: token(),
+      pin: generateCrockford(2, 4),
+      recoveryCode: generateCrockford(4, 4),
       submissionToken: token(),
     };
     reportToken = reportAdmissions.get(payload.submission.submissionToken);
@@ -467,6 +468,20 @@ describe("suite privacy and workflow boundaries", () => {
     });
     expect(r.statusCode).toBe(201);
     receipt = r.json();
+    expect(receipt.pin).toMatch(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+    expect(receipt.recoveryCode).toMatch(
+      /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/,
+    );
+    const lowerLogin = await call("/api/reporter/session", {
+      caseCode: receipt.caseCode,
+      pin: receipt.pin.toLowerCase(),
+    });
+    expect(lowerLogin.statusCode).toBe(200);
+    const unhyphenatedLogin = await call("/api/reporter/session", {
+      caseCode: receipt.caseCode,
+      pin: receipt.pin.replace("-", "").toLowerCase(),
+    });
+    expect(unhyphenatedLogin.statusCode).toBe(200);
     reporterCookie = cookie(r);
     const own = await call("/api/reporter/case", undefined, reporterCookie);
     caseId = own.json().id;
@@ -848,9 +863,13 @@ describe("suite privacy and workflow boundaries", () => {
     const old = reporterCookie;
     const recovered = await call("/api/reporter/recover", {
       caseCode: receipt.caseCode,
-      recoveryCode: receipt.recoveryCode,
+      recoveryCode: receipt.recoveryCode.replace(/-/g, "").toLowerCase(),
     });
     expect(recovered.statusCode).toBe(200);
+    expect(recovered.json().pin).toMatch(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+    expect(recovered.json().recoveryCode).toMatch(
+      /^[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}-[0-9A-Z]{4}$/,
+    );
     reporterCookie = cookie(recovered);
     expect((await call("/api/reporter/case", undefined, old)).statusCode).toBe(
       401,

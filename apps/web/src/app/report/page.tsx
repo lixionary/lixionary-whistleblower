@@ -64,6 +64,19 @@ export default function Report() {
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replace(/=+$/, "");
+  const crockford = (groups: number = 2) => {
+    const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    const bytes = crypto.getRandomValues(new Uint8Array(groups * 4));
+    const parts: string[] = [];
+    for (let g = 0; g < groups; g++) {
+      let part = "";
+      for (let i = 0; i < 4; i++) {
+        part += alphabet[bytes[g * 4 + i]! % alphabet.length];
+      }
+      parts.push(part);
+    }
+    return parts.join("-");
+  };
   const [details, setDetails] = useState<Record<string, string>>({});
   const [title, setTitle] = useState(""),
     [summary, setSummary] = useState(""),
@@ -149,8 +162,8 @@ export default function Report() {
                 e.preventDefault();
                 void a.run(async () => {
                   submission.current ??= {
-                    pin: newSecret(),
-                    recoveryCode: newSecret(),
+                    pin: crockford(2),
+                    recoveryCode: crockford(4),
                     submissionToken: newSecret(),
                   };
                   const r = await reportApi<{

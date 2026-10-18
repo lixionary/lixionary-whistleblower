@@ -14,6 +14,7 @@ import {
   useAction,
   usePoll,
 } from "./common";
+import { SafeMarkdown } from "./markdown";
 
 type Draft = FollowupUpdate & { clientMessageId: string };
 export function CaseConversation({
@@ -183,7 +184,11 @@ export function CaseConversation({
             <strong>
               {m.role === "assistant" ? "AI" : label("You", "Anda")}
             </strong>
-            <p style={{ whiteSpace: "pre-wrap" }}>{m.content}</p>
+            {m.role === "assistant" ? (
+              <SafeMarkdown content={m.content} />
+            ) : (
+              <p style={{ whiteSpace: "pre-wrap" }}>{m.content}</p>
+            )}
           </article>
         ))}
       </div>

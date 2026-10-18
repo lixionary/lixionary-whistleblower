@@ -259,6 +259,9 @@ export const strings = {
   sessions: ["Signed-in sessions", "Sesi masuk"],
   revoke: ["Revoke", "Cabut"],
   copy: ["Copy secrets", "Salin rahasia"],
+  copyItem: ["Copy", "Salin"],
+  copyAll: ["Copy all credentials", "Salin semua kredensial"],
+  copied: ["Copied!", "Tersalin!"],
   download: ["Download receipt", "Unduh tanda terima"],
   done: ["Saved", "Tersimpan"],
   request: ["Request", "Permintaan"],
@@ -880,34 +883,79 @@ export function Receipt({
   t: (s: string) => string;
 }) {
   const [saved, setSaved] = useState(false);
-  const text = `${receipt.caseCode}\nAccess secret: ${receipt.pin}\nRecovery secret: ${receipt.recoverySecret}\n`;
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const copy = (key: string, value: string) => {
+    void navigator.clipboard.writeText(value);
+    setCopiedKey(key);
+    setTimeout(() => {
+      setCopiedKey((curr) => (curr === key ? null : curr));
+    }, 2000);
+  };
+
+  const text = `${t("caseCode")}: ${receipt.caseCode}\n${t("pin")}: ${receipt.pin}\n${t("recovery")}: ${receipt.recoverySecret}\n`;
   return (
     <section>
       <h1>{receipt.caseCode}</h1>
       <p>{t("receipt")}</p>
       <dl>
+        <dt>{t("caseCode")}</dt>
+        <div className="receipt-field">
+          <dd className="case-id">{receipt.caseCode}</dd>
+          <button
+            type="button"
+            className="copy-btn"
+            onClick={() => copy("caseCode", receipt.caseCode)}
+            aria-label={`${t("copyItem")} ${t("caseCode")}`}
+          >
+            {copiedKey === "caseCode" ? t("copied") : t("copyItem")}
+          </button>
+        </div>
         <dt>{t("pin")}</dt>
-        <dd className="secret">{receipt.pin}</dd>
+        <div className="receipt-field">
+          <dd className="secret">{receipt.pin}</dd>
+          <button
+            type="button"
+            className="copy-btn"
+            onClick={() => copy("pin", receipt.pin)}
+            aria-label={`${t("copyItem")} ${t("pin")}`}
+          >
+            {copiedKey === "pin" ? t("copied") : t("copyItem")}
+          </button>
+        </div>
         <dt>{t("recovery")}</dt>
-        <dd className="secret">{receipt.recoverySecret}</dd>
+        <div className="receipt-field">
+          <dd className="secret">{receipt.recoverySecret}</dd>
+          <button
+            type="button"
+            className="copy-btn"
+            onClick={() => copy("recovery", receipt.recoverySecret)}
+            aria-label={`${t("copyItem")} ${t("recovery")}`}
+          >
+            {copiedKey === "recovery" ? t("copied") : t("copyItem")}
+          </button>
+        </div>
       </dl>
-      <button onClick={() => void navigator.clipboard.writeText(text)}>
-        {t("copy")}
-      </button>{" "}
-      <button
-        onClick={() => {
-          const url = URL.createObjectURL(
-            new Blob([text], { type: "text/plain" }),
-          );
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = "private-report-receipt.txt";
-          a.click();
-          URL.revokeObjectURL(url);
-        }}
-      >
-        {t("download")}
-      </button>
+      <div className="receipt-actions">
+        <button type="button" onClick={() => copy("all", text)}>
+          {copiedKey === "all" ? t("copied") : t("copyAll")}
+        </button>{" "}
+        <button
+          type="button"
+          onClick={() => {
+            const url = URL.createObjectURL(
+              new Blob([text], { type: "text/plain" }),
+            );
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `private-report-${receipt.caseCode}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+        >
+          {t("download")}
+        </button>
+      </div>
       <Check
         label={t("saved")}
         checked={saved}

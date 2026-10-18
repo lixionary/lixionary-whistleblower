@@ -71,6 +71,26 @@ export function unseal<T>(value: string, ring: Keyring, purpose: string): T {
   ) as T;
 }
 export const token = () => randomBytes(32).toString("base64url");
+export const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+export function generateCrockford(
+  groups: number = 2,
+  groupLength: number = 4,
+): string {
+  const bytes = randomBytes(groups * groupLength);
+  const parts: string[] = [];
+  let byteIndex = 0;
+  for (let g = 0; g < groups; g++) {
+    let part = "";
+    for (let i = 0; i < groupLength; i++) {
+      part += CROCKFORD_ALPHABET[bytes[byteIndex++]! % CROCKFORD_ALPHABET.length];
+    }
+    parts.push(part);
+  }
+  return parts.join("-");
+}
+export function normalizeSecret(secret: string): string {
+  return secret.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+}
 export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export const mac = (key: string, value: string) =>
@@ -99,6 +119,16 @@ export async function checkSecret(
   } catch {
     return false;
   }
+}
+export async function checkNormalizedSecret(
+  hash: string | undefined,
+  secret: string,
+): Promise<boolean> {
+  if (!hash) return checkSecret(undefined, secret);
+  const normalized = normalizeSecret(secret);
+  if (await checkSecret(hash, normalized)) return true;
+  if (secret !== normalized && (await checkSecret(hash, secret))) return true;
+  return false;
 }
 export type Capability = {
   sub: string;
