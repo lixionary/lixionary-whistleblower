@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     default: "Speak Up — Confidential reporting",
     template: "%s · Speak Up",
   },
-  description: "Confidential reporting for registered employees.",
+  description: "Secure and confidential whistleblowing reporting platform.",
   referrer: "no-referrer",
   robots: { index: false, follow: false },
 };

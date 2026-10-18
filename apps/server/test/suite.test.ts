@@ -100,11 +100,7 @@ async function admissionCode(challengeId: string) {
 }
 async function verifiedAccess() {
   const id = randomUUID(),
-    email = `employee-${id}@example.test`;
-  await rows(
-    vault.db,
-    sql`insert into employees(id,email_hash,body_enc) values(${id},${mac(shared, "employee:" + email)},${seal({ name: "Synthetic employee", email, phone: "+628123456789" }, vaultRing, "employee:" + id)})`,
-  );
+    email = `reporter-${id}@example.test`;
   const c = await admission("challenge", { email });
   expect(c.statusCode).toBe(200);
   const v = await admission("verify", {
@@ -1512,7 +1508,7 @@ describe("suite privacy and workflow boundaries", () => {
     );
     expect(pending!.n).toBe(1);
   });
-  it("enforces the gate for direct report and AI requests", async () => {
+  it("allows direct anonymous report submission without email verification and blocks bots via honeypot", async () => {
     const submission = {
       pin: token(),
       recoveryCode: token(),
@@ -1524,138 +1520,114 @@ describe("suite privacy and workflow boundaries", () => {
       headers: { origin, "x-csrf": "1" },
       payload: {
         submission,
-        title: "Blocked test report",
+        title: "Direct anonymous test report",
         summary:
-          "A valid synthetic narrative that must not be submitted without employee verification.",
+          "A valid synthetic narrative submitted anonymously without employee email gating.",
         category: "fraud",
         privacyReviewed: true,
         policyVersion: 1,
       },
     });
-    expect(r.statusCode).toBe(401);
-    expect(r.json().error).toBe("report_access_required");
-    for (const path of [
-      "/privacy/intake",
-      "/privacy/intake/" + randomUUID() + "/messages",
-      "/privacy/intake/" + randomUUID() + "/draft",
-    ]) {
-      const r = await privacy.inject({
-        url: path,
-        method: "POST",
-        headers: { origin, "x-csrf": "1" },
-        payload: {
-          consent: true,
-          locale: "en",
-          policyVersion: 1,
-          body: "Synthetic message",
-        },
-      });
-      expect(r.statusCode).toBe(401);
-    }
-  });
-  it("rejects unknown and inactive report emails without creating OTP jobs or access", async () => {
-    counts.clear();
-    const id = randomUUID(),
-      email = `disabled-${id}@example.test`;
-    await rows(
-      vault.db,
-      sql`insert into employees(id,email_hash,body_enc,active) values(${id},${mac(shared, "employee:" + email)},${seal({ name: "Disabled employee", email, phone: "+628123456789" }, vaultRing, "employee:" + id)},false)`,
-    );
-    const snapshot = async () => {
-      const [r] = await rows(
-        vault.db,
-        sql`select (select count(*) from delivery_jobs where kind='admission_otp') jobs,(select count(*) from admission_challenges) challenges,(select count(*) from admission_grants) grants,(select count(*) from intakes) intakes`,
-      );
-      return r;
+    expect(r.statusCode).toBe(201);
+    expect(r.json().caseCode).toMatch(/^WB-/);
+    expect(r.json().pin).toBeTypeOf("string");
+
+    // Honeypot test: bots that fill the hidden honeypot field receive a mock 201 without creating a case in DB
+    const botSubmission = {
+      pin: token(),
+      recoveryCode: token(),
+      submissionToken: token(),
     };
-    const before = await snapshot();
-    for (const [address, status] of [
-      [`unknown-${id}@example.test`, "unregistered"],
-      [email, "disabled"],
-    ]) {
-      const r = await admission("challenge", {
-        email: address,
-        purpose: "report",
-      });
-      expect(r.statusCode).toBe(200);
-      expect(r.json()).toEqual({ status });
-    }
-    expect(await snapshot()).toEqual(before);
-  });
-  it("verifies unregistered requests, approves atomically, and requires a fresh report OTP", async () => {
-    const email = `request-${randomUUID()}@example.test`,
-      employee = { name: "Access applicant", email, phone: "+628123456789" };
-    const c = await admission("challenge", { email });
-    expect(c.json()).toEqual({ status: "unregistered" });
-    expect(
-      (await admission("requests", { ...employee, requestToken: token() }))
-        .statusCode,
-    ).toBe(401);
-    const otp = await admission("challenge", { email, purpose: "request" }),
-      cid = otp.json().challengeId;
-    const proof = await admission("verify", {
-      challengeId: cid,
-      code: await admissionCode(cid),
+    const botRes = await app.inject({
+      url: "/api/reporter/reports",
+      method: "POST",
+      headers: { origin, "x-csrf": "1" },
+      payload: {
+        submission: botSubmission,
+        title: "Spam bot report",
+        summary: "Automated spam trying to abuse public intake form.",
+        category: "fraud",
+        privacyReviewed: true,
+        policyVersion: 1,
+        hp: "https://spam-bot.site",
+      },
     });
-    expect(proof.json().reportToken).toBeUndefined();
-    expect(
-      (
-        await admission("requests", {
-          ...employee,
-          email: "different@example.test",
-          requestToken: proof.json().requestToken,
-        })
-      ).statusCode,
-    ).toBe(401);
-    expect(
-      (
-        await admission("requests", {
-          ...employee,
-          requestToken: proof.json().requestToken,
-        })
-      ).statusCode,
-    ).toBe(200);
-    expect(
-      (
-        await admission("requests", {
-          ...employee,
-          requestToken: proof.json().requestToken,
-        })
-      ).statusCode,
-    ).toBe(401);
-    expect(
-      (await call("/api/admin/employee-requests", undefined, cookies.manager))
-        .statusCode,
-    ).toBe(403);
-    const list = await call(
-      "/api/admin/employee-requests",
-      undefined,
-      cookies.admin,
+    expect(botRes.statusCode).toBe(201);
+    const [botCase] = await rows(
+      caseStore.db,
+      sql`select * from cases where submission_hash=${digest(botSubmission.submissionToken)}`,
     );
-    const request = list
-      .json()
-      .items.find((r: { email: string }) => r.email === email);
-    expect(request.state).toBe("pending");
-    const resolve = () =>
-      call(
-        `/api/admin/employee-requests/${request.id}/resolve`,
-        { decision: "approved", employee },
-        cookies.admin,
-      );
-    const outcomes = await Promise.all([resolve(), resolve()]);
-    expect(outcomes.map((r) => r.statusCode).sort()).toEqual([200, 409]);
-    const [stored] = await rows(
-      vault.db,
-      sql`select body_enc from employees where email_hash=${mac(shared, "employee:" + email)}`,
-    );
-    expect(stored!.body_enc).not.toContain(email);
-    const decision = await rows(
-      vault.db,
-      sql`select id from delivery_jobs where kind='admission_decision'`,
-    );
-    expect(decision.length).toBeGreaterThan(0);
+    expect(botCase).toBeUndefined();
   });
-  it("persists OTP attempts and rejects expiration, reuse, and disabled employees", async () => {
+  it("submits report with optional email and verifies notification contact post-submission", async () => {
+    counts.clear();
+    const reporterEmail = `whistleblower-${randomUUID()}@example.test`;
+    const submission = {
+      pin: token(),
+      recoveryCode: token(),
+      submissionToken: token(),
+    };
+    const res = await app.inject({
+      url: "/api/reporter/reports",
+      method: "POST",
+      headers: { origin, "x-csrf": "1" },
+      payload: {
+        submission,
+        title: "Report with notification email",
+        summary:
+          "Reporter provides optional email to receive notification updates on progress.",
+        category: "fraud",
+        reporterEmail,
+        privacyReviewed: true,
+        policyVersion: 1,
+      },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().challengeId).toBeTypeOf("string");
+    expect(res.json().reporterEmail).toBe(reporterEmail);
+
+    // Verify OTP was queued
+    const jobs = await rows(
+      vault.db,
+      sql`select id,body_enc from delivery_jobs where kind='otp' order by created_at desc`,
+    );
+    const job = jobs
+      .map((j) =>
+        unseal<Record<string, unknown>>(
+          String(j.body_enc),
+          vaultRing,
+          "job:" + j.id,
+        ),
+      )
+      .find((b) => b.destination === reporterEmail);
+    expect(job).toBeDefined();
+
+    // Verify the contact using the capability returned
+    const cid = res.json().challengeId;
+    const verifyRes = await privacy.inject({
+      url: "/privacy/reporter/contacts/verify",
+      method: "POST",
+      headers: {
+        origin,
+        "x-csrf": "1",
+        authorization: `Bearer ${res.json().capability}`,
+      },
+      payload: {
+        challengeId: cid,
+        code: String(job!.code),
+      },
+    });
+    expect(verifyRes.statusCode).toBe(200);
+    expect(verifyRes.json().verified).toBe(true);
+
+    // Verify contact in vault has verified_at set
+    const [contact] = await rows(
+      vault.db,
+      sql`select verified_at from contacts where destination_hash=${mac(shared, `${digest(submission.submissionToken).slice(0, 32)}:${reporterEmail}`)}`,
+    );
+    expect(contact?.verified_at).not.toBeNull();
+  });
+  it("persists OTP attempts and rejects expiration and reuse", async () => {
     const access = await verifiedAccess();
     const [c] = await rows(
       vault.db,
@@ -1698,28 +1670,9 @@ describe("suite privacy and workflow boundaries", () => {
       (await admission("verify", { challengeId: cid, code: "123456" }))
         .statusCode,
     ).toBe(400);
-    const disabled = await call(
-      `/api/admin/employees/${access.id}`,
-      {
-        name: "Disabled employee",
-        email: access.email,
-        phone: "+628123456789",
-        active: false,
-      },
-      cookies.admin,
-      "PUT",
-    );
-    expect(disabled.statusCode).toBe(200);
     expect(
-      (await admission("challenge", { email: access.email })).json(),
-    ).toEqual({ status: "disabled" });
-    const r = await privacy.inject({
-      url: "/privacy/intake",
-      method: "POST",
-      headers: { origin, "x-csrf": "1", "x-report-access": access.reportToken },
-      payload: { consent: true, locale: "en", policyVersion: 1 },
-    });
-    expect(r.statusCode).toBe(401);
+      (await call(`/api/admin/employees/${access.id}`, {}, cookies.admin, "PUT")).statusCode,
+    ).toBe(404);
   });
   it("keeps published reports unlinkable to directory records and limits each grant to one submission", async () => {
     const access = await verifiedAccess(),
@@ -1765,7 +1718,7 @@ describe("suite privacy and workflow boundaries", () => {
       vault.db,
       sql`select * from admission_grants where token_hash=${digest(access.reportToken)}`,
     );
-    expect(g!.employee_id).toBeNull();
+    expect(g).toBeDefined();
     const c = await call("/api/reporter/case", undefined, cookie(r));
     const safe = JSON.stringify(c.json());
     expect(safe).not.toContain(access.email);
@@ -1774,7 +1727,7 @@ describe("suite privacy and workflow boundaries", () => {
     expect(
       (await call("/api/admin/employees", undefined, cookies.analyst))
         .statusCode,
-    ).toBe(403);
+    ).toBe(404);
   });
   it("submits the form before AI and privately persists context, transcript and review drafts", async () => {
     await withConversation(async (f) => {
@@ -1813,9 +1766,9 @@ describe("suite privacy and workflow boundaries", () => {
       expect(staff.body).not.toContain("aiConsent");
       const [grant] = await rows(
         vault.db,
-        sql`select employee_id from admission_grants where case_id=${view.json().id}`,
+        sql`select * from admission_grants where case_id=${view.json().id}`,
       );
-      expect(grant!.employee_id).toBeNull();
+      expect(grant).toBeDefined();
     });
   });
   it("replays AI and published update requests without duplicate work, audits or notifications", async () => {
@@ -2140,102 +2093,16 @@ describe("suite privacy and workflow boundaries", () => {
       expect((await f.request("")).json().messages).toEqual([]);
     });
   });
-  it("normalizes directory emails, revokes edited addresses, and never approves over a disabled employee", async () => {
-    counts.clear();
-    const access = await verifiedAccess(),
-      normalized = access.email.toUpperCase();
+  it("removes employee directory endpoints and rejects accesses to employees and employee-requests", async () => {
     expect(
-      (
-        await call(
-          "/api/admin/employees",
-          {
-            name: "Duplicate",
-            email: " " + normalized + " ",
-            phone: "+628123456789",
-          },
-          cookies.admin,
-        )
-      ).statusCode,
-    ).toBe(409);
-    const updatedEmail = `updated-${randomUUID()}@example.test`;
+      (await call("/api/admin/employees", undefined, cookies.admin)).statusCode,
+    ).toBe(404);
     expect(
-      (
-        await call(
-          `/api/admin/employees/${access.id}`,
-          {
-            name: "Updated employee",
-            email: updatedEmail,
-            phone: "+628123456789",
-            active: false,
-          },
-          cookies.admin,
-          "PUT",
-        )
-      ).statusCode,
-    ).toBe(200);
-    const [g] = await rows(
-      vault.db,
-      sql`select employee_id,revoked_at from admission_grants where token_hash=${digest(access.reportToken)}`,
-    );
-    expect(g!.employee_id).toBeNull();
-    expect(g!.revoked_at).not.toBeNull();
+      (await call("/api/admin/employees/123", {}, cookies.admin, "PUT")).statusCode,
+    ).toBe(404);
     expect(
-      (await admission("challenge", { email: access.email })).json().status,
-    ).toBe("unregistered");
-    expect(
-      (await admission("challenge", { email: updatedEmail })).json().status,
-    ).toBe("disabled");
-    const requestId = randomUUID(),
-      employee = {
-        name: "Applicant",
-        email: updatedEmail,
-        phone: "+628123456789",
-      };
-    await rows(
-      vault.db,
-      sql`insert into employee_requests(id,email_hash,body_enc,locale) values(${requestId},${mac(shared, "employee:" + updatedEmail)},${seal(employee, vaultRing, "employee-request:" + requestId)},'id')`,
-    );
-    const resolve = (decision: string) =>
-      call(
-        `/api/admin/employee-requests/${requestId}/resolve`,
-        { decision },
-        cookies.admin,
-      );
-    expect((await resolve("approved")).statusCode).toBe(409);
-    expect((await resolve("rejected")).statusCode).toBe(200);
-    expect((await resolve("rejected")).statusCode).toBe(409);
-    const [e] = await rows(
-      vault.db,
-      sql`select active from employees where id=${access.id}`,
-    );
-    expect(e!.active).toBe(false);
-    const jobs = await rows(
-      vault.db,
-      sql`select id,body_enc from delivery_jobs where kind='admission_decision'`,
-    );
-    const body = jobs
-      .map((j) =>
-        unseal<Record<string, unknown>>(
-          String(j.body_enc),
-          vaultRing,
-          "job:" + j.id,
-        ),
-      )
-      .find((b) => b.destination === updatedEmail);
-    expect(body).toMatchObject({ decision: "rejected", locale: "id" });
-    const auditJobs = await rows(
-      vault.db,
-      sql`select id,body_enc from delivery_jobs where kind='directory_audit'`,
-    );
-    for (const job of auditJobs) {
-      const event = unseal<Record<string, unknown>>(
-        String(job.body_enc),
-        vaultRing,
-        "job:" + job.id,
-      );
-      expect(event).not.toHaveProperty("caseId");
-      expect(JSON.stringify(event)).not.toContain(updatedEmail);
-    }
+      (await call("/api/admin/employee-requests", undefined, cookies.admin)).statusCode,
+    ).toBe(404);
   });
   it("retries a reserved report after a failed case commit and refuses a second concurrent submission", async () => {
     counts.clear();
@@ -2405,63 +2272,25 @@ describe("suite privacy and workflow boundaries", () => {
       await rows(caseStore.db, sql`select * from rate_limits where key=${key}`),
     ).toHaveLength(0);
   });
-  it("supports ISO 37002 configurable admission modes and stakeholder relationships", async () => {
-    counts.clear();
-    const [before] = await rows(
-      caseStore.db,
-      sql`select body from settings where id=1`,
-    );
-    try {
-      await rows(
-        caseStore.db,
-        sql`update settings set body=jsonb_set(body,'{admissionMode}','"directory_or_request"'::jsonb) where id=1`,
-      );
-      const unknownEmail = `contractor-${randomUUID()}@example.test`;
-      const ch1 = await admission("challenge", {
-        email: unknownEmail,
-        purpose: "report",
-      });
-      expect(ch1.statusCode).toBe(200);
-      expect(ch1.json()).toEqual({
-        status: "unregistered",
-        canRequestAccess: true,
-      });
-
-      await rows(
-        caseStore.db,
-        sql`update settings set body=jsonb_set(body,'{admissionMode}','"any_verified_email"'::jsonb) where id=1`,
-      );
-      const openEmail = `open-${randomUUID()}@example.test`;
-      const ch2 = await admission("challenge", {
-        email: openEmail,
-        purpose: "report",
-      });
-      expect(ch2.statusCode).toBe(200);
-      expect(ch2.json().status).toBe("otp");
-      const cid = ch2.json().challengeId as string;
-      const verified = await admission("verify", {
-        challengeId: cid,
-        code: await admissionCode(cid),
-      });
-      expect(verified.statusCode).toBe(200);
-      expect(verified.json().reportToken).toBeTypeOf("string");
-
+  it("supports ISO 37002 stakeholder relationships and open reporting", async () => {
+    for (const relationship of [
+      "contractor_supplier",
+      "former_employee",
+      "external",
+      "employee",
+    ] as const) {
       const submission = {
         pin: token(),
         recoveryCode: token(),
         submissionToken: token(),
       };
-      reportAdmissions.set(
-        submission.submissionToken,
-        verified.json().reportToken,
-      );
       const created = await call("/api/reporter/reports", {
         submission,
-        title: "External supplier bribery concern",
+        title: `Misconduct concern for ${relationship}`,
         summary:
-          "A third-party supplier observed improper solicitation during tender evaluation.",
+          "A stakeholder observed improper conduct during procurement and evaluation.",
         category: "corruption",
-        relationship: "contractor_supplier",
+        relationship,
         privacyReviewed: true,
         policyVersion: 1,
       });
@@ -2471,12 +2300,8 @@ describe("suite privacy and workflow boundaries", () => {
         undefined,
         cookie(created),
       );
-      expect(repView.json().content.relationship).toBe("contractor_supplier");
-    } finally {
-      await rows(
-        caseStore.db,
-        sql`update settings set body=${JSON.stringify(before!.body)}::jsonb where id=1`,
-      );
+      expect(repView.statusCode).toBe(200);
+      expect(repView.json().content.relationship).toBe(relationship);
     }
   });
   it("enforces ISO 37002 acknowledgment, detriment protection, procedural fairness, post-closure detriment and k-anonymous feedback analytics", async () => {

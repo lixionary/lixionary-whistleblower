@@ -23,12 +23,6 @@ export const staffNavigation = [
     icon: Users,
     roles: ["admin"],
   },
-  {
-    href: "/staff/admin/employees",
-    key: "employees",
-    icon: Users,
-    roles: ["admin"],
-  },
   { href: "/staff/admin/teams", key: "teams", icon: Network, roles: ["admin"] },
   {
     href: "/staff/admin/settings",

@@ -1,6 +1,5 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
-import { ReportGate } from "@/components/suite/report-gate";
 import { api, ApiError } from "@/lib/api";
 import {
   Shell,
@@ -18,6 +17,7 @@ import {
   type CompanySettings,
   type ReporterRelationship,
 } from "@whistle/shared";
+
 type Company = Pick<
   CompanySettings,
   | "companyName"
@@ -27,6 +27,7 @@ type Company = Pick<
   | "businessUnits"
   | "aiEnabled"
 > & { version: number };
+
 export default function Report() {
   const l = useLanguage(),
     { t, lang } = l,
@@ -36,34 +37,22 @@ export default function Report() {
       caseCode: string;
       pin: string;
       recoveryCode: string;
+      capability?: string;
+      challengeId?: string;
+      reporterEmail?: string;
     }>();
-  const [reportToken, setReportToken] = useState(""),
-    [gateOpen, setGateOpen] = useState(true);
-  const reportApi = async <T,>(
-    path: string,
-    options: Parameters<typeof api>[1] = {},
-  ) => {
-    try {
-      return await api<T>(path, {
-        ...options,
-        headers: { ...options.headers, "x-report-access": reportToken },
-      });
-    } catch (e) {
-      if (e instanceof ApiError && e.code === "report_access_required")
-        setGateOpen(true);
-      throw e;
-    }
-  };
   const submission = useRef<{
     pin: string;
     recoveryCode: string;
     submissionToken: string;
   } | null>(null);
+
   const newSecret = () =>
     btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
       .replaceAll("+", "-")
       .replaceAll("/", "_")
       .replace(/=+$/, "");
+
   const crockford = (groups: number = 2) => {
     const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
     const bytes = crypto.getRandomValues(new Uint8Array(groups * 4));
@@ -77,6 +66,7 @@ export default function Report() {
     }
     return parts.join("-");
   };
+
   const [details, setDetails] = useState<Record<string, string>>({});
   const [title, setTitle] = useState(""),
     [summary, setSummary] = useState(""),
@@ -85,9 +75,12 @@ export default function Report() {
     [relationship, setRelationship] =
       useState<ReporterRelationship>("employee"),
     [sensitive, setSensitive] = useState(false),
+    [reporterEmail, setReporterEmail] = useState(""),
+    [hp, setHp] = useState(""),
     [review, setReview] = useState(false),
     [policy, setPolicy] = useState(false);
   const [aiConsent, setAiConsent] = useState(false);
+
   useEffect(() => {
     void api<Company>("/api/reporter/company")
       .then((c) => {
@@ -96,34 +89,10 @@ export default function Report() {
       })
       .catch((e) => a.setError(String(e)));
   }, []);
+
   return (
     <Shell language={l}>
       <ErrorBox error={a.error} />
-      {gateOpen && !receipt && (
-        <ReportGate
-          lang={lang}
-          resumeToken={reportToken || undefined}
-          onVerified={(raw) => {
-            setReportToken(raw);
-            setGateOpen(false);
-            a.setError("");
-          }}
-          onCancel={() => setGateOpen(false)}
-        />
-      )}
-      {!reportToken && !receipt && (
-        <section>
-          <h1>{t("report")}</h1>
-          <p>
-            {lang === "id"
-              ? "Verifikasi email karyawan Anda untuk memulai."
-              : "Verify your employee email to begin."}
-          </p>
-          <button onClick={() => setGateOpen(true)}>
-            {lang === "id" ? "Verifikasi email" : "Verify email"}
-          </button>
-        </section>
-      )}
       {receipt ? (
         <Receipt
           receipt={{ ...receipt, recoverySecret: receipt.recoveryCode }}
@@ -133,7 +102,7 @@ export default function Report() {
             window.location.href = "/case";
           }}
         />
-      ) : company && reportToken ? (
+      ) : company ? (
         <>
           <h1>{t("report")}</h1>
           <section>
@@ -166,10 +135,13 @@ export default function Report() {
                     recoveryCode: crockford(4),
                     submissionToken: newSecret(),
                   };
-                  const r = await reportApi<{
+                  const r = await api<{
                     caseCode: string;
                     pin: string;
                     recoveryCode: string;
+                    capability?: string;
+                    challengeId?: string;
+                    reporterEmail?: string;
                   }>("/api/reporter/reports", {
                     method: "POST",
                     body: {
@@ -180,6 +152,8 @@ export default function Report() {
                       businessUnit: unit,
                       relationship,
                       sensitive,
+                      reporterEmail: reporterEmail.trim() || undefined,
+                      hp: hp || undefined,
                       details,
                       locale: lang,
                       privacyReviewed: true,
@@ -202,11 +176,11 @@ export default function Report() {
                     throw e;
                   });
                   setReceipt(r);
-                  setReportToken("");
-                  setGateOpen(false);
                   submission.current = null;
                   setTitle("");
                   setSummary("");
+                  setReporterEmail("");
+                  setHp("");
                   setDetails({});
                   setReview(false);
                   setPolicy(false);
@@ -214,6 +188,24 @@ export default function Report() {
                 });
               }}
             >
+              <div
+                style={{
+                  position: "absolute",
+                  left: "-9999px",
+                  opacity: 0,
+                  pointerEvents: "none",
+                }}
+                aria-hidden="true"
+              >
+                <input
+                  type="text"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={hp}
+                  onChange={(e) => setHp(e.target.value)}
+                />
+              </div>
               <Field
                 label={t("title")}
                 required
@@ -236,6 +228,26 @@ export default function Report() {
                   setReview(false);
                 }}
               />
+              <Field
+                label={t("reporterEmail")}
+                type="email"
+                maxLength={254}
+                value={reporterEmail}
+                onChange={(e) => {
+                  setReporterEmail(e.target.value);
+                  setReview(false);
+                }}
+              />
+              <p
+                style={{
+                  fontSize: "0.875rem",
+                  color: "var(--muted, #666)",
+                  marginTop: "-0.5rem",
+                  marginBottom: "1rem",
+                }}
+              >
+                {t("reporterEmailHint")}
+              </p>
               <details open={Object.values(details).some(Boolean)}>
                 <summary>
                   {lang === "id"

@@ -13,7 +13,6 @@ export function safeStaffReturn(value: string | null): string {
         "/staff/account",
         "/staff/analytics",
         "/staff/admin/users",
-        "/staff/admin/employees",
         "/staff/admin/teams",
         "/staff/admin/settings",
         "/staff/admin/operations",

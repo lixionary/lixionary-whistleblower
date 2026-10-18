@@ -45,7 +45,7 @@ export const strings = {
   skip: ["Skip to content", "Langsung ke konten"],
   navigation: ["Main navigation", "Navigasi utama"],
   confidential: ["Confidential reporting", "Pelaporan rahasia"],
-  noAccount: ["For registered employees", "Untuk karyawan terdaftar"],
+  noAccount: ["No account required", "Tidak perlu akun"],
   reportIntro: [
     "Share a concern at your own pace. Review your report and evidence before sharing them with the review team.",
     "Sampaikan kekhawatiran Anda sesuai kenyamanan Anda. Tinjau laporan dan bukti sebelum membagikannya kepada tim peninjau.",
@@ -78,8 +78,28 @@ export const strings = {
   portal: ["Open my case", "Buka laporan saya"],
   staff: ["Staff portal", "Portal staf"],
   privacy: [
-    "Employee email verification is required. Your employee identity is not attached to the report. Optional case contacts are hidden from staff; report details may still identify you.",
-    "Verifikasi email karyawan wajib dilakukan. Identitas karyawan tidak disertakan dalam laporan. Kontak laporan opsional disembunyikan dari staf; isi laporan dapat mengungkapkan identitas Anda.",
+    "Reports are submitted confidentially and can be completely anonymous. Optional case contacts are hidden from review staff; report details may still identify you.",
+    "Laporan dikirim secara rahasia dan dapat sepenuhnya anonim. Kontak laporan opsional disembunyikan dari staf peninjau; isi laporan dapat mengungkapkan identitas Anda.",
+  ],
+  reporterEmail: [
+    "Notification email (optional)",
+    "Email notifikasi (opsional)",
+  ],
+  reporterEmailHint: [
+    "Optional. Used only to send you case update alerts. Kept confidential and hidden from case handlers.",
+    "Opsional. Hanya digunakan untuk mengirim pemberitahuan pembaruan laporan. Dijaga kerahasiaannya dan disembunyikan dari peninjau laporan.",
+  ],
+  verifyEmailNotification: [
+    "Verify notification email",
+    "Verifikasi email notifikasi",
+  ],
+  verifyEmailNotificationDesc: [
+    "A 6-digit verification code was queued for %s. Enter it below to activate notifications, or continue now and verify later in your case portal.",
+    "Kode verifikasi 6-digit telah dikirim ke %s. Masukkan di bawah untuk mengaktifkan notifikasi, atau lanjutkan sekarang dan verifikasi nanti di portal laporan Anda.",
+  ],
+  emailVerifiedSuccess: [
+    "Notification email verified successfully.",
+    "Email notifikasi berhasil diverifikasi.",
   ],
   submit: ["Submit report", "Kirim laporan"],
   save: ["Save", "Simpan"],
@@ -878,12 +898,23 @@ export function Receipt({
   onDone,
   t,
 }: {
-  receipt: { caseCode: string; pin: string; recoverySecret: string };
+  receipt: {
+    caseCode: string;
+    pin: string;
+    recoverySecret: string;
+    capability?: string;
+    challengeId?: string;
+    reporterEmail?: string;
+  };
   onDone: () => void;
   t: (s: string) => string;
 }) {
   const [saved, setSaved] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [otpCode, setOtpCode] = useState("");
+  const [otpVerified, setOtpVerified] = useState(false);
+  const [otpBusy, setOtpBusy] = useState(false);
+  const [otpError, setOtpError] = useState("");
 
   const copy = (key: string, value: string) => {
     void navigator.clipboard.writeText(value);
@@ -956,6 +987,51 @@ export function Receipt({
           {t("download")}
         </button>
       </div>
+      {receipt.challengeId && receipt.reporterEmail && (
+        <article className="receipt-otp-box">
+          <h3>{t("verifyEmailNotification")}</h3>
+          {otpVerified ? (
+            <p style={{ color: "green" }}>{t("emailVerifiedSuccess")}</p>
+          ) : (
+            <>
+              <p>
+                {t("verifyEmailNotificationDesc").replace(
+                  "%s",
+                  receipt.reporterEmail,
+                )}
+              </p>
+              <ErrorBox error={otpError} />
+              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                <Field
+                  label={t("verify")}
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value)}
+                />
+                <button
+                  type="button"
+                  disabled={otpBusy || otpCode.length !== 6}
+                  onClick={() => {
+                    setOtpBusy(true);
+                    setOtpError("");
+                    privateApi("/contacts/verify", {
+                      method: "POST",
+                      body: { challengeId: receipt.challengeId, code: otpCode },
+                    })
+                      .then(() => setOtpVerified(true))
+                      .catch((e) => setOtpError(String(e?.message ?? e)))
+                      .finally(() => setOtpBusy(false));
+                  }}
+                >
+                  {t("verify")}
+                </button>
+              </div>
+            </>
+          )}
+        </article>
+      )}
       <Check
         label={t("saved")}
         checked={saved}

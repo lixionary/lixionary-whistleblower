@@ -4,9 +4,6 @@ import { z } from "zod";
 import {
   settingsSchema,
   staffRoles,
-  employeeSchema,
-  employeeUpdateSchema,
-  employeeQuerySchema,
 } from "@whistle/shared";
 import { hashSecret, token } from "@whistle/runtime";
 import { requireStaff } from "../auth.js";
@@ -75,56 +72,6 @@ export async function adminRoutes(app: FastifyInstance) {
   });
   app.register(async (a) => {
     a.addHook("preHandler", async (req) => admin(req.staff!));
-    a.get("/employees", async (req) =>
-      (
-        await privacyCall(
-          req,
-          "employees/list",
-          employeeQuerySchema.parse(req.query),
-        )
-      ).json(),
-    );
-    a.post("/employees", async (req) =>
-      (
-        await privacyCall(req, "employees/save", {
-          ...employeeSchema.parse(req.body),
-          active: true,
-          actor: req.staff!.id,
-        })
-      ).json(),
-    );
-    a.put("/employees/:id", async (req) =>
-      (
-        await privacyCall(req, "employees/save", {
-          ...employeeUpdateSchema.parse(req.body),
-          id: z.object({ id: z.uuid() }).parse(req.params).id,
-          actor: req.staff!.id,
-        })
-      ).json(),
-    );
-    a.get("/employee-requests", async (req) =>
-      (
-        await privacyCall(
-          req,
-          "employee-requests/list",
-          employeeQuerySchema.parse(req.query),
-        )
-      ).json(),
-    );
-    a.post("/employee-requests/:id/resolve", async (req) =>
-      (
-        await privacyCall(req, "employee-requests/resolve", {
-          ...z
-            .object({
-              decision: z.enum(["approved", "rejected"]),
-              employee: employeeSchema.optional(),
-            })
-            .parse(req.body),
-          id: z.object({ id: z.uuid() }).parse(req.params).id,
-          actor: req.staff!.id,
-        })
-      ).json(),
-    );
     a.get("/settings", async () => settings(db));
     a.put("/settings", async (req) => {
       const v = settingsSchema.parse(req.body);

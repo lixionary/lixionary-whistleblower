@@ -20,12 +20,7 @@ export const outcomes = [
   "duplicate",
   "withdrawn",
 ] as const;
-export const admissionModes = [
-  "directory",
-  "directory_or_request",
-  "any_verified_email",
-] as const;
-export type AdmissionMode = (typeof admissionModes)[number];
+
 export const reporterRelationships = [
   "employee",
   "former_employee",
@@ -74,6 +69,14 @@ export const suiteReportSchema = z.object({
   privacyReviewed: z.literal(true),
   policyVersion: z.number().int().positive(),
   aiConsent: z.boolean().default(false),
+  reporterEmail: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .pipe(z.email().max(254))
+    .optional()
+    .or(z.literal("").transform(() => undefined)),
+  hp: z.string().max(100).optional(),
   intakeId: z.uuid().optional(),
   intakeToken: z.string().min(20).max(200).optional(),
 });
@@ -118,7 +121,6 @@ export const settingsSchema = z
       .array(z.string().trim().min(1).max(100))
       .max(100)
       .default([]),
-    admissionMode: z.enum(admissionModes).default("directory"),
     aiEnabled: z.boolean().default(false),
     acknowledgmentDays: z.number().int().min(1).max(365),
     followupDays: z.number().int().min(1).max(365),
@@ -147,8 +149,8 @@ export const defaultSettings: CompanySettings = {
     id: "Laporkan dugaan pelanggaran dengan itikad baik. Laporan Anda akan ditinjau melalui platform ini.",
   },
   privacyNotice: {
-    en: "Employee email verification is required before reporting. Administrators manage the employee directory, but employee identity is not included in reports. Optional case contacts are hidden from staff. Report content and circumstances may identify you. External delivery providers process destinations; optional AI processes your submitted report and private follow-up conversation only with consent.",
-    id: "Verifikasi email karyawan wajib dilakukan sebelum melapor. Administrator mengelola daftar karyawan, tetapi identitas karyawan tidak disertakan dalam laporan. Kontak laporan opsional disembunyikan dari staf. Isi dan situasi laporan dapat mengidentifikasi Anda. Penyedia pengiriman eksternal memproses tujuan; AI opsional memproses laporan terkirim dan percakapan tindak lanjut pribadi hanya dengan persetujuan.",
+    en: "Your report is submitted securely and confidentially. You may report anonymously without providing contact details, or optionally provide an email to receive case updates. Optional case contacts are hidden from staff. Report content and circumstances may identify you. External delivery providers process destinations; optional AI processes your submitted report and private follow-up conversation only with consent.",
+    id: "Laporan Anda dikirimkan dengan aman dan rahasia. Anda dapat melapor secara anonim tanpa memberikan rincian kontak, atau secara opsional memberikan email untuk menerima pembaruan laporan. Kontak laporan opsional disembunyikan dari staf. Isi dan situasi laporan dapat mengidentifikasi Anda. Penyedia pengiriman eksternal memproses tujuan; AI opsional memproses laporan terkirim dan percakapan tindak lanjut pribadi hanya dengan persetujuan.",
   },
   categories: [
     { key: "fraud", en: "Fraud", id: "Penipuan" },
@@ -158,7 +160,6 @@ export const defaultSettings: CompanySettings = {
     { key: "other", en: "Other misconduct", id: "Pelanggaran lainnya" },
   ],
   businessUnits: [],
-  admissionMode: "directory",
   aiEnabled: false,
   acknowledgmentDays: 7,
   followupDays: 30,

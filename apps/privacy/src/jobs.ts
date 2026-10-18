@@ -287,10 +287,6 @@ export async function expire(db: Db, config: Config) {
         )})`
       : sql`true`;
   const r = info.settings.retention;
-  await rows(
-    db,
-    sql`delete from employee_requests where resolved_at is not null and resolved_at<now()-${r.contacts}*interval '1 day'`,
-  );
   for (const kind of ["contacts", "transcripts", "evidence"] as const) {
     const table =
       kind === "transcripts"

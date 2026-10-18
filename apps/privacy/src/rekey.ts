@@ -8,8 +8,6 @@ const config = loadConfig(),
 try {
   await db.transaction(async (tx) => {
     for (const [table, column, prefix] of [
-      ["employees", "body_enc", "employee"],
-      ["employee_requests", "body_enc", "employee-request"],
       ["admission_challenges", "email_enc", "admission-challenge"],
       ["contacts", "destination_enc", "contact"],
       ["intakes", "transcript_enc", "intake"],

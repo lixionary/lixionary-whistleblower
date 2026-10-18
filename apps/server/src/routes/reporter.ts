@@ -66,18 +66,18 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
   app.post("/reports", async (req, reply) => {
     csrf(req);
     if (
-      !/^[A-Za-z0-9_-]{43}$/.test(String(req.headers["x-report-access"] ?? ""))
-    )
-      throw new HttpError(
-        401,
-        "Employee verification required",
-        "report_access_required",
-      );
-    if (
       !(await limiter.hit(mac(config.abuseKey, "submit:" + req.ip), 10, 3600))
     )
       throw new HttpError(429, "Limit", "rate_limit");
     const v = suiteReportSchema.parse(req.body);
+    if (v.hp) {
+      return reply.status(201).send({
+        caseCode: "WB-" + generateCrockford(4, 4),
+        pin: generateCrockford(2, 4),
+        recoveryCode: generateCrockford(4, 4),
+        capability: "",
+      });
+    }
     const s = await settings(db);
     if (config.production && !s.configured)
       throw new HttpError(503, "Setup required", "setup_required");
@@ -92,6 +92,7 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
       : randomUUID();
     const pin = retry?.pin ?? generateCrockford(2, 4),
       recoveryCode = retry?.recoveryCode ?? generateCrockford(4, 4);
+    let challengeId: string | undefined;
     const row = await db.transaction(async (tx) => {
       if (submissionHash) {
         const [erased] = await rows(
@@ -117,11 +118,17 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
               "Retry credentials changed",
               "submission_conflict",
             );
-          await privacyCall(req, "admission/reserve", {
-            reportToken: String(req.headers["x-report-access"] ?? ""),
-            submissionHash: submissionHash!,
-            caseId: id,
-          });
+          const reserveRes = (await (
+            await privacyCall(req, "admission/reserve", {
+              reportToken: req.headers["x-report-access"]
+                ? String(req.headers["x-report-access"])
+                : undefined,
+              submissionHash: submissionHash!,
+              caseId: id,
+              reporterEmail: v.reporterEmail,
+            })
+          ).json()) as { challengeId?: string };
+          challengeId = reserveRes.challengeId;
           return existing;
         }
       }
@@ -136,20 +143,26 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
           "Invalid category or unit",
           "validation_error",
         );
-      await privacyCall(req, "admission/reserve", {
-        reportToken: String(req.headers["x-report-access"] ?? ""),
-        submissionHash: submissionHash!,
-        caseId: id,
-        aiConsent: v.aiConsent,
-        policyVersion: v.policyVersion,
-        locale: v.locale,
-        ...(v.intakeId
-          ? { intakeId: v.intakeId, intakeToken: v.intakeToken }
-          : {}),
-      });
+      const reserveRes = (await (
+        await privacyCall(req, "admission/reserve", {
+          reportToken: req.headers["x-report-access"]
+            ? String(req.headers["x-report-access"])
+            : undefined,
+          submissionHash: submissionHash!,
+          caseId: id,
+          aiConsent: v.aiConsent,
+          policyVersion: v.policyVersion,
+          locale: v.locale,
+          reporterEmail: v.reporterEmail,
+          ...(v.intakeId
+            ? { intakeId: v.intakeId, intakeToken: v.intakeToken }
+            : {}),
+        })
+      ).json()) as { challengeId?: string };
+      challengeId = reserveRes.challengeId;
       const [r] = await rows<CaseRow>(
         tx,
-        sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(normalizeSecret(pin))},${await hashSecret(normalizeSecret(recoveryCode))},${submissionHash},${seal({ ...v, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
+        sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(normalizeSecret(pin))},${await hashSecret(normalizeSecret(recoveryCode))},${submissionHash},${seal({ ...v, hp: undefined, reporterEmail: undefined, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
       );
       await audit(tx, "reporter", "report_submitted", id, {
         policyVersion: s.version,
@@ -163,6 +176,7 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
       pin,
       recoveryCode,
       capability: reporterCapability(req, row, sid),
+      ...(challengeId ? { challengeId, reporterEmail: v.reporterEmail } : {}),
     });
   });
   app.post("/session", async (req, reply) => {
