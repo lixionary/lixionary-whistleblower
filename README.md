@@ -65,7 +65,7 @@ The tracker is disabled until configured. See [Jira configuration](docs/runbook.
 
 ## Versioning
 
-The root `package.json` is the release-version source of truth. All workspace packages share version `0.8.0`. The footer on reporter and staff screens shows the version; its tooltip includes the build revision. Build metadata is embedded in the frontend assets and changes only after rebuilding.
+The root `package.json` is the release-version source of truth. All workspace packages share version `1.0.0`. The footer on reporter and staff screens shows the version; its tooltip includes the build revision. Build metadata is embedded in the frontend assets and changes only after rebuilding.
 
 ```sh
 pnpm version:check          # Validate every workspace package
