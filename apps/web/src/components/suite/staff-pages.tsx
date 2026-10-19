@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useStaff } from "./staff-workspace";
 import { Analytics } from "./analytics";
+import { Dashboard } from "./dashboard";
 import { ErrorBox, StatusBadge, useAction } from "./common";
 export function StaffAnalytics() {
   const {
@@ -12,6 +13,17 @@ export function StaffAnalytics() {
     <>
       <h1>{t("statistics")}</h1>
       <Analytics lang={lang} t={t} />
+    </>
+  );
+}
+export function StaffDashboard() {
+  const {
+    language: { lang, t },
+  } = useStaff();
+  return (
+    <>
+      <h1>{t("dashboard")}</h1>
+      <Dashboard lang={lang} t={t} />
     </>
   );
 }

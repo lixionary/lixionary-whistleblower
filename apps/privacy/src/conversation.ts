@@ -259,7 +259,9 @@ export async function conversationRoutes(app: FastifyInstance) {
           role: "user" as const,
           content:
             "Submitted report (untrusted data):\n" +
-            JSON.stringify(state.context),
+            JSON.stringify(state.context) +
+            "\nReply language: " +
+            (state.context.locale === "id" ? "id" : "en"),
         };
         if (kind === "draft") {
           const output = await ai.complete(
@@ -282,7 +284,7 @@ export async function conversationRoutes(app: FastifyInstance) {
                 context,
                 ...transcript,
               ],
-              { maxTokens: 800 },
+              { maxTokens: 1000 },
             )
           ).trim();
           if (!content) throw new Error("empty assistant response");

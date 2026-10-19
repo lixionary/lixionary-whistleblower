@@ -8,6 +8,7 @@ import {
   Activity,
   UserRound,
   Kanban,
+  LayoutDashboard,
 } from "lucide-react";
 import type { StaffRole } from "@whistle/shared";
 export const staffNavigation = [
@@ -16,6 +17,12 @@ export const staffNavigation = [
     key: "cases",
     icon: ClipboardList,
     roles: ["manager", "analyst"],
+  },
+  {
+    href: "/staff/admin/dashboard",
+    key: "dashboard",
+    icon: LayoutDashboard,
+    roles: ["admin"],
   },
   {
     href: "/staff/admin/users",

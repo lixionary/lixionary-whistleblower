@@ -4,6 +4,8 @@ import { z } from "zod";
 import {
   settingsSchema,
   staffRoles,
+  type CaseState,
+  type DashboardData,
 } from "@whistle/shared";
 import { hashSecret, token } from "@whistle/runtime";
 import { requireStaff } from "../auth.js";
@@ -358,6 +360,90 @@ export async function adminRoutes(app: FastifyInstance) {
         ),
         until,
       };
+    });
+    a.get("/dashboard", async (req) => {
+      const day = z.iso.date();
+      const today = new Date().toISOString().slice(0, 10);
+      const q = z
+        .object({
+          from: day.optional(),
+          to: day.default(today),
+        })
+        .parse(req.query);
+      const from =
+        q.from ??
+        new Date(Date.parse(q.to) - 29 * 86400000).toISOString().slice(0, 10);
+      const days = (Date.parse(q.to) - Date.parse(from)) / 86400000;
+      if (!(days >= 0 && days <= 365))
+        throw new HttpError(400, "Invalid date range", "validation_error");
+      const end = new Date(Date.parse(q.to) + 86400000).toISOString();
+      const start = new Date(from).toISOString();
+      const s = await settings(db);
+      const inRange = sql`c.created_at>=${start}::timestamptz and c.created_at<${end}::timestamptz`;
+      const states = await rows<{ state: CaseState; count: number }>(
+        db,
+        sql`select c.state,count(*)::int count from cases c where ${inRange} group by c.state`,
+      );
+      const count = (...names: string[]) =>
+        states
+          .filter((r) => names.includes(r.state))
+          .reduce((n, r) => n + r.count, 0);
+      const [support] = await rows<{ overdue: number }>(
+        db,
+        sql`select count(*) filter(where c.created_at<now()-${s.body.acknowledgmentDays}*interval '1 day' and c.acknowledged_at is null)::int overdue from cases c where c.state in ('received','triage') and ${inRange}`,
+      );
+      const [manager] = await rows<{ waiting_on_staff: number }>(
+        db,
+        sql`select count(*)::int waiting_on_staff from cases c where c.state='investigating' and ${inRange} and (select m.author from case_messages m where m.case_id=c.id order by m.created_at desc limit 1)='reporter'`,
+      );
+      const outcomes = await rows<{ outcome: string; count: number }>(
+        db,
+        sql`select coalesce(c.closure->>'outcome','unknown') outcome,count(*)::int count from cases c where c.state='closed' and ${inRange} group by 1 order by 2 desc`,
+      );
+      const trend = await rows<{
+        day: string;
+        created: number;
+        closed: number;
+      }>(
+        db,
+        sql`select to_char(d,'YYYY-MM-DD') as day,
+          (select count(*)::int from cases c where (c.created_at at time zone 'UTC')::date=d) created,
+          (select count(*)::int from cases c where (c.closed_at at time zone 'UTC')::date=d) closed
+          from generate_series(${from}::date,${q.to}::date,interval '1 day') d order by d`,
+      );
+      let ai: DashboardData["ai"] = null;
+      try {
+        const body = (await (
+          await privacyCall(req, "stats", { from: start, to: end })
+        ).json()) as { ai: Record<string, number> };
+        ai = {
+          total: body.ai.total!,
+          notStarted: body.ai.not_started!,
+          active: body.ai.active!,
+          failed: body.ai.failed!,
+          idle: body.ai.idle!,
+        };
+      } catch {
+        // The case figures stay useful while the private service is down.
+      }
+      await audit(db, req.staff!.id, "dashboard_viewed");
+      return {
+        range: { from, to: q.to },
+        total: states.reduce((n, r) => n + r.count, 0),
+        states,
+        waitingForSupport: {
+          count: count("received", "triage"),
+          overdue: support?.overdue ?? 0,
+        },
+        caseManager: {
+          waitingOnReporter: count("waiting_reporter"),
+          waitingOnStaff: manager?.waiting_on_staff ?? 0,
+        },
+        ai,
+        outcomes,
+        pendingClosure: count("closure_review"),
+        trend,
+      } satisfies DashboardData;
     });
     a.get("/operations", async (req) => {
       let privacy: unknown;

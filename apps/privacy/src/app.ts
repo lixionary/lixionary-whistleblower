@@ -508,6 +508,29 @@ export async function buildApp(deps: Dependencies) {
           sql`select status,count(*)::int count from files group by status`,
         ),
       }));
+      internal.post("/stats", async (req) => {
+        const v = z
+          .object({ from: z.iso.datetime(), to: z.iso.datetime() })
+          .parse(req.body);
+        // Counts only: no content is decrypted and nothing identifies a reporter.
+        const [ai] = await rows(
+          db,
+          sql`with latest as (
+            select distinct on (i.id) i.id,o.status,o.lease_until,o.created_at op_at
+            from intakes i left join conversation_operations o on o.intake_id=i.id
+            where i.case_id is not null and i.revoked_at is null
+              and i.created_at>=${v.from}::timestamptz and i.created_at<${v.to}::timestamptz
+            order by i.id,o.created_at desc nulls last
+          )
+          select count(*)::int total,
+            count(*) filter(where status is null)::int not_started,
+            count(*) filter(where status='failed' or (status='running' and lease_until<=now()))::int failed,
+            count(*) filter(where status='running' and lease_until>now() or (status='done' and op_at>=now()-interval '7 days'))::int active,
+            count(*) filter(where status='done' and op_at<now()-interval '7 days')::int idle
+          from latest`,
+        );
+        return { ai };
+      });
       internal.post("/claim", async (req) => {
         const v = z
           .object({

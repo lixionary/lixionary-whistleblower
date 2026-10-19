@@ -344,6 +344,7 @@ export const strings = {
   staffMembers: ["Staff", "Staf"],
   employees: ["Employees", "Karyawan"],
   statistics: ["Statistics", "Statistik"],
+  dashboard: ["Dashboard", "Dasbor"],
   account: ["Account", "Akun"],
   overview: ["Overview", "Ringkasan"],
   investigation: ["Investigation", "Penyelidikan"],

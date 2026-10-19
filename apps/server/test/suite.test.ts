@@ -727,6 +727,42 @@ describe("suite privacy and workflow boundaries", () => {
         .groups,
     ).toHaveLength(0);
   });
+  it("serves an admin-only dashboard with exact counts and a zero-filled trend", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const ok = await call(
+      `/api/admin/dashboard?to=${today}`,
+      undefined,
+      cookies.admin,
+    );
+    expect(ok.statusCode).toBe(200);
+    const body = ok.json();
+    expect(body.trend).toHaveLength(30);
+    expect(body.trend.at(-1).day).toBe(today);
+    expect(body.total).toBeGreaterThan(0);
+    expect(body.total).toBe(
+      body.states.reduce((n: number, r: { count: number }) => n + r.count, 0),
+    );
+    expect(
+      body.trend.reduce(
+        (n: number, d: { created: number }) => n + d.created,
+        0,
+      ),
+    ).toBeGreaterThanOrEqual(body.total);
+    expect(body.ai).toMatchObject({ total: expect.any(Number) });
+    expect(
+      (
+        await call(
+          `/api/admin/dashboard?from=2000-01-01&to=${today}`,
+          undefined,
+          cookies.admin,
+        )
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (await call("/api/admin/dashboard", undefined, cookies.manager))
+        .statusCode,
+    ).toBe(403);
+  });
   it("supports conversation and independent closure approval", async () => {
     expect(
       (
@@ -1742,9 +1778,10 @@ describe("suite privacy and workflow boundaries", () => {
       expect(started.statusCode).toBe(200);
       expect(started.json().messages).toHaveLength(1);
       expect(f.requests[0].messages[0].content).toContain(
-        "information is already complete",
+        "OPENING TURN",
       );
       expect(f.requests[0].messages[1].content).toContain("Warehouse A");
+      expect(f.requests[0].messages[1].content).toContain("Reply language:");
       const sent = await f.request("/messages", {
         requestId: randomUUID(),
         body: "Unreviewed private identity clue",
