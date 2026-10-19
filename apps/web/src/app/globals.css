@@ -122,12 +122,16 @@ textarea {
 }
 .suite .wordmark {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
+  gap: 10px;
   color: var(--ink);
   font: 400 30px/1 var(--font-serif);
   letter-spacing: -0.5px;
   white-space: nowrap;
   text-decoration: none;
+}
+.wordmark .brand-logo-mark {
+  margin-bottom: 2px;
 }
 .wordmark::after {
   content: ".";

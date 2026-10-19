@@ -18,6 +18,7 @@ import type { StaffIdentity } from "@whistle/shared";
 import { api, ApiError } from "@/lib/api";
 import { BuildSignature } from "@/components/build-signature";
 import { LanguageSelector } from "./language-selector";
+import { LogoMark } from "./logo";
 import { ErrorBox, StatusBadge, friendly, useLanguage } from "./common";
 import {
   safeStaffReturn,
@@ -286,6 +287,7 @@ export function StaffWorkspace({ children }: { children: ReactNode }) {
         <header className="suite-header staff-header">
           <div className="brand-lockup">
             <Link className="wordmark" href="/">
+              <LogoMark size={28} />
               Speak Up
             </Link>
             <span className="brand-caption">{t("staff")}</span>

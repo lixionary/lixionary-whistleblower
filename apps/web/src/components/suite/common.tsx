@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { BuildSignature } from "@/components/build-signature";
 import { LanguageSelector } from "./language-selector";
+import { LogoMark } from "./logo";
 import { api, ApiError } from "@/lib/api";
 export const strings = {
   developmentTracker: ["Development Tracker", "Pelacak Pengembangan"],
@@ -533,6 +534,7 @@ export function Shell({
       <header className="suite-header">
         <div className="brand-lockup">
           <Link className="wordmark" href="/">
+            <LogoMark size={28} />
             Speak Up
           </Link>
           <span className="brand-caption">Lixionary</span>
