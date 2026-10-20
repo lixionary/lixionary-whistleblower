@@ -2,7 +2,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { AlertTriangle, Copy, Download, ShieldCheck } from "lucide-react";
 import { BuildSignature } from "@/components/build-signature";
 import { LanguageSelector } from "./language-selector";
 import { LogoMark } from "./logo";
@@ -166,6 +166,46 @@ export const strings = {
     "Simpan rahasia ini di tempat pribadi. Rahasia hanya ditampilkan sekali. Verifikasi kontak tidak dapat memulihkan laporan.",
   ],
   saved: ["I have saved my secrets", "Saya telah menyimpan rahasia saya"],
+  submitted: ["Submitted", "Terkirim"],
+  receiptSubmitted: [
+    "Your report has been submitted",
+    "Laporan Anda telah dikirim",
+  ],
+  receiptReplaced: ["Save your new secrets", "Simpan rahasia baru Anda"],
+  receiptIntro: [
+    "These three values are the only way back to your case. Nobody, including staff, can look them up or reset them for you.",
+    "Tiga nilai ini adalah satu-satunya cara kembali ke laporan Anda. Tidak ada pihak, termasuk staf, yang dapat mencari atau mengatur ulangnya untuk Anda.",
+  ],
+  receiptCopyNow: [
+    "Copy now — these secrets will not be shown again.",
+    "Salin sekarang — rahasia ini tidak akan ditampilkan lagi.",
+  ],
+  credentials: ["Case credentials", "Kredensial laporan"],
+  pinHelp: [
+    "Use it with your case code to sign in and follow up.",
+    "Gunakan bersama kode laporan untuk masuk dan menindaklanjuti.",
+  ],
+  recoveryHelp: [
+    "Use it if you lose the access secret. Recovering issues two new secrets.",
+    "Gunakan jika Anda kehilangan rahasia akses. Pemulihan menerbitkan dua rahasia baru.",
+  ],
+  nextSteps: ["What happens next", "Apa yang terjadi selanjutnya"],
+  nextReview: [
+    "A case manager reviews your report and acknowledges it.",
+    "Manajer kasus meninjau laporan Anda dan mengonfirmasi penerimaannya.",
+  ],
+  nextQuestions: [
+    "Investigators may ask you questions through your case. Check back, or verify an email for update alerts.",
+    "Penyelidik dapat mengajukan pertanyaan melalui laporan Anda. Periksa kembali, atau verifikasi email untuk pemberitahuan pembaruan.",
+  ],
+  nextEvidence: [
+    "You can approve more evidence and report retaliation from your case at any time.",
+    "Anda dapat menyetujui bukti tambahan dan melaporkan pembalasan dari laporan Anda kapan saja.",
+  ],
+  verifyEmailMeaning: [
+    "Alerts only say there is an update, never what it is. Verifying shows you control the address; it does not confirm your identity or recover your case.",
+    "Pemberitahuan hanya menyatakan ada pembaruan, bukan isinya. Verifikasi menunjukkan Anda mengendalikan alamat tersebut; verifikasi tidak mengonfirmasi identitas atau memulihkan laporan.",
+  ],
   password: ["Password", "Kata sandi"],
   email: ["Email", "Email"],
   login: ["Sign in", "Masuk"],
@@ -515,9 +555,11 @@ export function useLanguage() {
 export function Shell({
   children,
   language,
+  wide = false,
 }: {
   children: ReactNode;
   language: ReturnType<typeof useLanguage>;
+  wide?: boolean;
 }) {
   const { lang, setLang, t } = language;
   const pathname = usePathname();
@@ -527,7 +569,9 @@ export function Shell({
     { href: "/staff", key: "staff" },
   ];
   return (
-    <div className={`suite${pathname === "/staff" ? " suite-workspace" : ""}`}>
+    <div
+      className={`suite${pathname === "/staff" ? " suite-workspace" : ""}${wide ? " suite-wide" : ""}`}
+    >
       <a className="skip-link" href="#main-content">
         {t("skip")}
       </a>
@@ -924,6 +968,7 @@ export function Receipt({
   receipt,
   onDone,
   t,
+  submitted = false,
 }: {
   receipt: {
     caseCode: string;
@@ -935,6 +980,7 @@ export function Receipt({
   };
   onDone: () => void;
   t: (s: string) => string;
+  submitted?: boolean;
 }) {
   const [saved, setSaved] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -952,123 +998,160 @@ export function Receipt({
   };
 
   const text = `${t("caseCode")}: ${receipt.caseCode}\n${t("pin")}: ${receipt.pin}\n${t("recovery")}: ${receipt.recoverySecret}\n`;
+  const credentials = [
+    { key: "caseCode", value: receipt.caseCode, className: "case-id" },
+    { key: "pin", value: receipt.pin, className: "secret" },
+    { key: "recovery", value: receipt.recoverySecret, className: "secret" },
+  ];
   return (
-    <section>
-      <h1>{receipt.caseCode}</h1>
-      <p>{t("receipt")}</p>
-      <dl>
-        <dt>{t("caseCode")}</dt>
-        <div className="receipt-field">
-          <dd className="case-id">{receipt.caseCode}</dd>
-          <button
-            type="button"
-            className="copy-btn"
-            onClick={() => copy("caseCode", receipt.caseCode)}
-            aria-label={`${t("copyItem")} ${t("caseCode")}`}
-          >
-            {copiedKey === "caseCode" ? t("copied") : t("copyItem")}
-          </button>
+    <section className="lx-receipt">
+      <header>
+        {submitted && (
+          <span className="badge badge-ok badge-dot">{t("submitted")}</span>
+        )}
+        <h1>{t(submitted ? "receiptSubmitted" : "receiptReplaced")}</h1>
+        <p>{t("receiptIntro")}</p>
+      </header>
+      <section className="lx-secret" aria-label={t("credentials")}>
+        <AlertTriangle size={20} aria-hidden="true" />
+        <div className="lx-secret-body">
+          <p>
+            <strong>{t("receiptCopyNow")}</strong> {t("receipt")}
+          </p>
+          <dl className="lx-credentials">
+            {credentials.map(({ key, value, className }) => (
+              <div className="lx-credential" key={key}>
+                <dt>{t(key)}</dt>
+                <dd className={className}>{value}</dd>
+                <button
+                  type="button"
+                  className="ds-button ds-icon-button"
+                  onClick={() => copy(key, value)}
+                  aria-label={`${copiedKey === key ? t("copied") : t("copyItem")} ${t(key)}`}
+                >
+                  <Copy size={16} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </dl>
+          <div className="lx-row">
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => copy("all", text)}
+            >
+              <Copy size={16} aria-hidden="true" />
+              {copiedKey === "all" ? t("copied") : t("copyAll")}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => {
+                const url = URL.createObjectURL(
+                  new Blob([text], { type: "text/plain" }),
+                );
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `private-report-${receipt.caseCode}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download size={16} aria-hidden="true" />
+              {t("download")}
+            </button>
+          </div>
+          <div className="lx-explain">
+            <div className="lx-well">
+              <strong>{t("pin")}</strong>
+              <span>{t("pinHelp")}</span>
+            </div>
+            <div className="lx-well">
+              <strong>{t("recovery")}</strong>
+              <span>{t("recoveryHelp")}</span>
+            </div>
+          </div>
+          <div className="lx-confirm">
+            <Check
+              label={t("saved")}
+              checked={saved}
+              onChange={(e) => setSaved(e.target.checked)}
+            />
+            <button type="button" disabled={!saved} onClick={onDone}>
+              {t("portal")}
+            </button>
+          </div>
         </div>
-        <dt>{t("pin")}</dt>
-        <div className="receipt-field">
-          <dd className="secret">{receipt.pin}</dd>
-          <button
-            type="button"
-            className="copy-btn"
-            onClick={() => copy("pin", receipt.pin)}
-            aria-label={`${t("copyItem")} ${t("pin")}`}
-          >
-            {copiedKey === "pin" ? t("copied") : t("copyItem")}
-          </button>
-        </div>
-        <dt>{t("recovery")}</dt>
-        <div className="receipt-field">
-          <dd className="secret">{receipt.recoverySecret}</dd>
-          <button
-            type="button"
-            className="copy-btn"
-            onClick={() => copy("recovery", receipt.recoverySecret)}
-            aria-label={`${t("copyItem")} ${t("recovery")}`}
-          >
-            {copiedKey === "recovery" ? t("copied") : t("copyItem")}
-          </button>
-        </div>
-      </dl>
-      <div className="receipt-actions">
-        <button type="button" onClick={() => copy("all", text)}>
-          {copiedKey === "all" ? t("copied") : t("copyAll")}
-        </button>{" "}
-        <button
-          type="button"
-          onClick={() => {
-            const url = URL.createObjectURL(
-              new Blob([text], { type: "text/plain" }),
-            );
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `private-report-${receipt.caseCode}.txt`;
-            a.click();
-            URL.revokeObjectURL(url);
-          }}
-        >
-          {t("download")}
-        </button>
-      </div>
+      </section>
       {receipt.challengeId && receipt.reporterEmail && (
-        <article className="receipt-otp-box">
-          <h3>{t("verifyEmailNotification")}</h3>
-          {otpVerified ? (
-            <p style={{ color: "green" }}>{t("emailVerifiedSuccess")}</p>
-          ) : (
-            <>
+        <section className="lx-card lx-stack">
+          <div>
+            <h2>{t("verifyEmailNotification")}</h2>
+            {otpVerified ? (
+              <p role="status">{t("emailVerifiedSuccess")}</p>
+            ) : (
               <p>
                 {t("verifyEmailNotificationDesc").replace(
                   "%s",
                   receipt.reporterEmail,
                 )}
               </p>
-              <ErrorBox error={otpError} />
-              <div
-                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
-              >
+            )}
+          </div>
+          {!otpVerified && (
+            <form
+              className="lx-well lx-otp-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setOtpBusy(true);
+                setOtpError("");
+                privateApi("/contacts/verify", {
+                  method: "POST",
+                  body: { challengeId: receipt.challengeId, code: otpCode },
+                })
+                  .then(() => setOtpVerified(true))
+                  .catch((e) => setOtpError(String(e?.message ?? e)))
+                  .finally(() => setOtpBusy(false));
+              }}
+            >
+              <div className="lx-otp">
                 <Field
-                  label={t("verify")}
+                  label={t("code")}
                   inputMode="numeric"
+                  autoComplete="one-time-code"
                   pattern="[0-9]{6}"
                   maxLength={6}
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value)}
+                  onChange={(e) =>
+                    setOtpCode(e.target.value.replace(/\D/g, ""))
+                  }
                 />
-                <button
-                  type="button"
-                  disabled={otpBusy || otpCode.length !== 6}
-                  onClick={() => {
-                    setOtpBusy(true);
-                    setOtpError("");
-                    privateApi("/contacts/verify", {
-                      method: "POST",
-                      body: { challengeId: receipt.challengeId, code: otpCode },
-                    })
-                      .then(() => setOtpVerified(true))
-                      .catch((e) => setOtpError(String(e?.message ?? e)))
-                      .finally(() => setOtpBusy(false));
-                  }}
-                >
-                  {t("verify")}
-                </button>
               </div>
-            </>
+              <button
+                className="secondary"
+                disabled={otpBusy || otpCode.length !== 6}
+              >
+                {t("verify")}
+              </button>
+            </form>
           )}
-        </article>
+          <ErrorBox error={otpError} />
+          <p className="lx-help">{t("verifyEmailMeaning")}</p>
+        </section>
       )}
-      <Check
-        label={t("saved")}
-        checked={saved}
-        onChange={(e) => setSaved(e.target.checked)}
-      />
-      <button disabled={!saved} onClick={onDone}>
-        {t("portal")}
-      </button>
+      {submitted && (
+        <section className="lx-panel lx-stack" aria-labelledby="next-steps">
+          <h2 id="next-steps">{t("nextSteps")}</h2>
+          <ol className="lx-steps">
+            {["nextReview", "nextQuestions", "nextEvidence"].map((key, i) => (
+              <li key={key}>
+                <span>{i + 1}</span>
+                <span>{t(key)}</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
     </section>
   );
 }

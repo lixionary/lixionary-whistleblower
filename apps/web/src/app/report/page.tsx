@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useRef } from "react";
+import { ArrowLeft } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
   Shell,
@@ -181,11 +182,26 @@ export default function Report() {
       .catch((e) => a.setError(String(e)));
   }, []);
 
+  const detail = (key: string) => ({
+    value: details[key] ?? "",
+    maxLength: 5000,
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setDetails({ ...details, [key]: e.target.value }),
+  });
+  const label = (en: string, id: string) => (lang === "id" ? id : en);
+  const intro = (id: string, title: string, text: string) => (
+    <div className="review-intro">
+      <h2 id={id}>{title}</h2>
+      <p>{text}</p>
+    </div>
+  );
+
   return (
-    <Shell language={l}>
-      <ErrorBox error={a.error} />
+    <Shell language={l} wide={!receipt}>
+      {mode !== "review" && <ErrorBox error={a.error} />}
       {receipt ? (
         <Receipt
+          submitted
           receipt={{ ...receipt, recoverySecret: receipt.recoveryCode }}
           t={t}
           onDone={() => {
@@ -194,285 +210,373 @@ export default function Report() {
           }}
         />
       ) : company ? (
-        <>
-          <h1>{t("report")}</h1>
-          <IntakeChat
-            lang={lang}
-            company={company}
-            policy={policy}
-            consent={aiConsent}
-            onPolicy={setPolicy}
-            onConsent={setAiConsent}
-            onReview={openReview}
-            onFallback={() => {
-              setReview(false);
-              setMode("review");
+        <IntakeChat
+          lang={lang}
+          company={company}
+          policy={policy}
+          consent={aiConsent}
+          onPolicy={setPolicy}
+          onConsent={setAiConsent}
+          onReview={openReview}
+          onFallback={() => {
+            setReview(false);
+            setMode("review");
+          }}
+          onIntake={setIntake}
+          onPolicyChanged={refreshPolicy}
+          reviewing={mode === "review"}
+        >
+          <form
+            className="review-form"
+            aria-label={label("Review report", "Tinjau laporan")}
+            onChange={(e) => {
+              if (!(
+                e.target instanceof HTMLInputElement &&
+                ["privacy-review", "policy", "ai-consent"].includes(
+                  e.target.name,
+                )
+              ))
+                setReview(false);
             }}
-            onIntake={setIntake}
-            onPolicyChanged={refreshPolicy}
-            reviewing={mode === "review"}
-          />
-          <div hidden={mode !== "review"}>
-            <h2>
-              {lang === "id" ? "Tinjau laporan Anda" : "Review your report"}
-            </h2>
-            <button
-              type="button"
-              className="secondary"
-              disabled={a.busy}
-              onClick={() =>
-                void a.run(async () => {
-                  await saveDraft();
-                  setMode("chat");
-                })
-              }
-            >
-              {lang === "id" ? "Kembali ke percakapan" : "Back to conversation"}
-            </button>
-            <section>
-              <h2>{company.companyName}</h2>
-              <details open>
-                <summary>{t("policy")}</summary>
-                <p>{company.policy[lang]}</p>
-              </details>
-              <details open>
-                <summary>{t("notice")}</summary>
-                <p>{company.privacyNotice[lang]}</p>
-              </details>
-              <Check
-                label={
-                  lang === "id"
-                    ? "Saya telah membaca kebijakan dan pemberitahuan privasi."
-                    : "I have read the policy and privacy notice."
-                }
-                checked={policy}
-                onChange={(e) => setPolicy(e.target.checked)}
-              />
-            </section>
-            <section>
-              <form
-                aria-label={lang === "id" ? "Tinjau laporan" : "Review report"}
-                onChange={(e) => {
-                  if (!(
-                    e.target instanceof HTMLInputElement &&
-                    e.target.name === "privacy-review"
-                  ))
-                    setReview(false);
-                }}
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void a.run(async () => {
-                    submission.current ??= {
-                      pin: crockford(2),
-                      recoveryCode: crockford(4),
-                      submissionToken: newSecret(),
-                    };
-                    const r = await api<{
-                      caseCode: string;
-                      pin: string;
-                      recoveryCode: string;
-                      capability?: string;
-                      challengeId?: string;
-                      reporterEmail?: string;
-                    }>("/api/reporter/reports", {
-                      method: "POST",
-                      body: {
-                        submission: submission.current,
-                        title,
-                        summary,
-                        category,
-                        businessUnit: unit,
-                        relationship,
-                        sensitive,
-                        reporterEmail: reporterEmail.trim() || undefined,
-                        hp: hp || undefined,
-                        details,
-                        locale: lang,
-                        privacyReviewed: true,
-                        policyVersion: company.version,
-                        aiConsent,
-                        ...(intake
-                          ? { intakeId: intake.id, intakeToken: intake.code }
-                          : {}),
-                      },
-                    }).catch(async (e) => {
-                      if (
-                        e instanceof ApiError &&
-                        e.code === "policy_changed"
-                      ) {
-                        const current = await api<Company>(
-                          "/api/reporter/company",
-                        );
-                        setCompany(current);
-                        if (!current.categories.some((c) => c.key === category))
-                          setCategory(current.categories[0]!.key);
-                        if (unit && !current.businessUnits.includes(unit))
-                          setUnit("");
-                        setPolicy(false);
-                        setReview(false);
-                      }
-                      throw e;
-                    });
-                    setIntake(null);
-                    setReceipt(r);
-                    submission.current = null;
-                    setTitle("");
-                    setSummary("");
-                    setReporterEmail("");
-                    setHp("");
-                    setDetails({});
-                    setReview(false);
+            onSubmit={(e) => {
+              e.preventDefault();
+              void a.run(async () => {
+                submission.current ??= {
+                  pin: crockford(2),
+                  recoveryCode: crockford(4),
+                  submissionToken: newSecret(),
+                };
+                const r = await api<{
+                  caseCode: string;
+                  pin: string;
+                  recoveryCode: string;
+                  capability?: string;
+                  challengeId?: string;
+                  reporterEmail?: string;
+                }>("/api/reporter/reports", {
+                  method: "POST",
+                  body: {
+                    submission: submission.current,
+                    title,
+                    summary,
+                    category,
+                    businessUnit: unit,
+                    relationship,
+                    sensitive,
+                    reporterEmail: reporterEmail.trim() || undefined,
+                    hp: hp || undefined,
+                    details,
+                    locale: lang,
+                    privacyReviewed: true,
+                    policyVersion: company.version,
+                    aiConsent,
+                    ...(intake
+                      ? { intakeId: intake.id, intakeToken: intake.code }
+                      : {}),
+                  },
+                }).catch(async (e) => {
+                  if (e instanceof ApiError && e.code === "policy_changed") {
+                    const current = await api<Company>("/api/reporter/company");
+                    setCompany(current);
+                    if (!current.categories.some((c) => c.key === category))
+                      setCategory(current.categories[0]!.key);
+                    if (unit && !current.businessUnits.includes(unit))
+                      setUnit("");
                     setPolicy(false);
-                    setAiConsent(false);
-                  });
-                }}
-              >
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "-9999px",
-                    opacity: 0,
-                    pointerEvents: "none",
-                  }}
-                  aria-hidden="true"
-                >
-                  <input
-                    type="text"
-                    name="website"
-                    tabIndex={-1}
-                    autoComplete="off"
-                    value={hp}
-                    onChange={(e) => setHp(e.target.value)}
-                  />
-                </div>
+                    setReview(false);
+                  }
+                  throw e;
+                });
+                setIntake(null);
+                setReceipt(r);
+                submission.current = null;
+                setTitle("");
+                setSummary("");
+                setReporterEmail("");
+                setHp("");
+                setDetails({});
+                setReview(false);
+                setPolicy(false);
+                setAiConsent(false);
+              });
+            }}
+          >
+            <div
+              style={{
+                position: "absolute",
+                left: "-9999px",
+                opacity: 0,
+                pointerEvents: "none",
+              }}
+              aria-hidden="true"
+            >
+              <input
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                value={hp}
+                onChange={(e) => setHp(e.target.value)}
+              />
+            </div>
+            <section className="review-section" aria-labelledby="review-report">
+              {intro(
+                "review-report",
+                label("Report", "Laporan"),
+                label(
+                  "Investigators read these first.",
+                  "Penyelidik membaca bagian ini lebih dulu.",
+                ),
+              )}
+              <div className="review-fields">
                 <Field
                   label={t("title")}
                   required
                   minLength={5}
                   maxLength={200}
                   value={title}
-                  onChange={(e) => {
-                    setTitle(e.target.value);
-                    setReview(false);
-                  }}
+                  onChange={(e) => setTitle(e.target.value)}
                 />
                 <Text
                   label={t("summary")}
                   required
+                  rows={6}
                   minLength={20}
                   maxLength={10000}
                   value={summary}
-                  onChange={(e) => {
-                    setSummary(e.target.value);
-                    setReview(false);
-                  }}
+                  onChange={(e) => setSummary(e.target.value)}
                 />
+              </div>
+            </section>
+            <section
+              className="review-section"
+              aria-labelledby="review-details"
+            >
+              {intro(
+                "review-details",
+                label("Details", "Detail"),
+                label(
+                  "Optional. Leave anything you don’t know blank.",
+                  "Opsional. Kosongkan yang tidak Anda ketahui.",
+                ),
+              )}
+              <div className="review-fields">
+                <Text label={t("what")} rows={3} {...detail("what")} />
+                <Field label={t("who")} {...detail("who")} />
+                <div className="review-pair">
+                  <Field label={t("when")} {...detail("when")} />
+                  <Field label={t("where")} {...detail("where")} />
+                </div>
+                <Text label={t("how")} rows={2} {...detail("how")} />
+                <Text label={t("why")} rows={2} {...detail("why")} />
+                <Text label={t("howKnown")} rows={2} {...detail("howKnown")} />
+                <Field label={t("evidence")} {...detail("evidence")} />
+                <Text label={t("impact")} rows={2} {...detail("impact")} />
+                <fieldset>
+                  <legend>{t("ongoing")}</legend>
+                  <div className="lx-segmented">
+                    {(
+                      [
+                        ["yes", label("Yes", "Ya")],
+                        ["no", label("No", "Tidak")],
+                        ["unknown", label("Not sure", "Tidak yakin")],
+                      ] as const
+                    ).map(([value, text]) => (
+                      <label key={value}>
+                        <input
+                          type="radio"
+                          name="ongoing"
+                          value={value}
+                          checked={details.ongoing === value}
+                          onChange={() =>
+                            setDetails({ ...details, ongoing: value })
+                          }
+                        />
+                        {text}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+            </section>
+            <section
+              className="review-section"
+              aria-labelledby="review-classification"
+            >
+              {intro(
+                "review-classification",
+                label("Classification", "Klasifikasi"),
+                label(
+                  "Helps the case manager route and prioritise.",
+                  "Membantu manajer kasus menentukan tujuan dan prioritas.",
+                ),
+              )}
+              <div className="review-fields">
+                <div className="review-pair">
+                  <Select
+                    label={t("category")}
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                  >
+                    {company.categories.map((c) => (
+                      <option key={c.key} value={c.key}>
+                        {c[lang]}
+                      </option>
+                    ))}
+                  </Select>
+                  {company.businessUnits.length > 0 && (
+                    <Select
+                      label={t("businessUnit")}
+                      value={unit}
+                      onChange={(e) => setUnit(e.target.value)}
+                    >
+                      <option value="">
+                        {label("Not sure", "Tidak yakin")}
+                      </option>
+                      {company.businessUnits.map((u) => (
+                        <option key={u}>{u}</option>
+                      ))}
+                    </Select>
+                  )}
+                </div>
+                <fieldset>
+                  <legend>{t("relationship")}</legend>
+                  <div className="lx-choices">
+                    {reporterRelationships.map((r) => (
+                      <label key={r} className="lx-choice">
+                        <input
+                          type="radio"
+                          name="relationship"
+                          value={r}
+                          checked={relationship === r}
+                          onChange={() => setRelationship(r)}
+                        />
+                        {t(`rel_${r}`)}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </div>
+            </section>
+            <section
+              className="review-section"
+              aria-labelledby="review-routing"
+            >
+              {intro(
+                "review-routing",
+                label("Sensitive routing", "Penanganan sensitif"),
+                label(
+                  "Your choice, separate from the category.",
+                  "Pilihan Anda, terpisah dari kategori.",
+                ),
+              )}
+              <div className="review-fields">
+                <div className="lx-card lx-toggle">
+                  <button
+                    type="button"
+                    role="switch"
+                    className="ds-button lx-switch"
+                    aria-checked={sensitive}
+                    aria-labelledby="sensitive-label"
+                    aria-describedby="sensitive-help"
+                    onClick={() => setSensitive(!sensitive)}
+                  />
+                  <span className="lx-toggle-text">
+                    <strong id="sensitive-label">
+                      {label(
+                        "Send to the independent review team",
+                        "Kirim ke tim peninjau independen",
+                      )}
+                    </strong>
+                    <span id="sensitive-help">{t("sensitive")}</span>
+                  </span>
+                </div>
+              </div>
+            </section>
+            <section
+              className="review-section"
+              aria-labelledby="review-notifications"
+            >
+              {intro(
+                "review-notifications",
+                label("Notifications", "Notifikasi"),
+                label(
+                  "Optional. Never sent to the assistant or shown to investigators.",
+                  "Opsional. Tidak pernah dikirim ke asisten atau ditampilkan kepada penyelidik.",
+                ),
+              )}
+              <div className="review-fields">
                 <Field
                   label={t("reporterEmail")}
                   type="email"
+                  placeholder="you@example.com"
                   maxLength={254}
                   value={reporterEmail}
-                  onChange={(e) => {
-                    setReporterEmail(e.target.value);
-                    setReview(false);
-                  }}
+                  onChange={(e) => setReporterEmail(e.target.value)}
                 />
-                <p
-                  style={{
-                    fontSize: "0.875rem",
-                    color: "var(--muted, #666)",
-                    marginTop: "-0.5rem",
-                    marginBottom: "1rem",
-                  }}
-                >
-                  {t("reporterEmailHint")}
-                </p>
-                <details open={Object.values(details).some(Boolean)}>
-                  <summary>
-                    {lang === "id"
-                      ? "Detail tambahan (opsional)"
-                      : "Additional details (optional)"}
-                  </summary>
-                  {[
-                    "what",
-                    "who",
-                    "when",
-                    "where",
-                    "why",
-                    "how",
-                    "howKnown",
-                    "evidence",
-                    "impact",
-                    "ongoing",
-                  ].map((key) => (
-                    <Text
-                      key={key}
-                      label={t(key)}
-                      maxLength={5000}
-                      value={details[key] ?? ""}
-                      onChange={(e) => {
-                        setDetails({ ...details, [key]: e.target.value });
-                        setReview(false);
-                      }}
-                    />
-                  ))}
-                </details>
-                <Select
-                  label={t("relationship")}
-                  value={relationship}
-                  onChange={(e) =>
-                    setRelationship(e.target.value as ReporterRelationship)
-                  }
-                >
-                  {reporterRelationships.map((r) => (
-                    <option key={r} value={r}>
-                      {t(`rel_${r}`)}
-                    </option>
-                  ))}
-                </Select>
-                <Select
-                  label={t("category")}
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                >
-                  {company.categories.map((c) => (
-                    <option key={c.key} value={c.key}>
-                      {c[lang]}
-                    </option>
-                  ))}
-                </Select>
-                {company.businessUnits.length > 0 && (
-                  <Select
-                    label={t("businessUnit")}
-                    value={unit}
-                    onChange={(e) => setUnit(e.target.value)}
-                  >
-                    <option value="">—</option>
-                    {company.businessUnits.map((u) => (
-                      <option key={u}>{u}</option>
-                    ))}
-                  </Select>
-                )}
-                <Check
-                  label={t("sensitive")}
-                  checked={sensitive}
-                  onChange={(e) => setSensitive(e.target.checked)}
-                />
-                {company.aiEnabled && (
+                <p className="lx-help">{t("reporterEmailHint")}</p>
+              </div>
+            </section>
+            <section className="review-section" aria-labelledby="review-submit">
+              {intro(
+                "review-submit",
+                label("Before you submit", "Sebelum mengirim"),
+                t("privacy"),
+              )}
+              <div className="review-fields">
+                <div className="lx-card review-checks">
+                  <details>
+                    <summary>
+                      {t("policy")} · {t("notice")}
+                    </summary>
+                    <h3>{company.companyName}</h3>
+                    <p>{company.policy[lang]}</p>
+                    <p>{company.privacyNotice[lang]}</p>
+                  </details>
                   <Check
-                    label={t("aiConsent")}
-                    checked={aiConsent}
-                    onChange={(e) => setAiConsent(e.target.checked)}
+                    label={label(
+                      "I have read the policy and privacy notice.",
+                      "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+                    )}
+                    name="policy"
+                    checked={policy}
+                    onChange={(e) => setPolicy(e.target.checked)}
                   />
-                )}
-                <p>{t("privacy")}</p>
-                <Check
-                  label={t("review")}
-                  name="privacy-review"
-                  required
-                  checked={review}
-                  onChange={(e) => setReview(e.target.checked)}
-                />
+                  {company.aiEnabled && (
+                    <Check
+                      label={t("aiConsent")}
+                      name="ai-consent"
+                      checked={aiConsent}
+                      onChange={(e) => setAiConsent(e.target.checked)}
+                    />
+                  )}
+                  <Check
+                    label={t("review")}
+                    name="privacy-review"
+                    required
+                    checked={review}
+                    onChange={(e) => setReview(e.target.checked)}
+                  />
+                </div>
+              </div>
+            </section>
+            <ErrorBox error={a.error} />
+            <div className="review-footer">
+              <button
+                type="button"
+                className="ds-button ds-button-ghost"
+                disabled={a.busy}
+                onClick={() =>
+                  void a.run(async () => {
+                    await saveDraft();
+                    setMode("chat");
+                  })
+                }
+              >
+                <ArrowLeft size={16} aria-hidden="true" />
+                {label("Back to conversation", "Kembali ke percakapan")}
+              </button>
+              <div className="lx-row">
                 {intake && (
                   <>
                     <p role="status">{draftStatus}</p>
@@ -484,25 +588,25 @@ export default function Report() {
                         void a.run(async () => {
                           await saveDraft();
                           setDraftStatus(
-                            lang === "id" ? "Draf tersimpan" : "Draft saved",
+                            label("Draft saved", "Draf tersimpan"),
                           );
                         })
                       }
                     >
-                      {lang === "id" ? "Simpan draf" : "Save draft"}
+                      {label("Save draft", "Simpan draf")}
                     </button>
                   </>
                 )}
                 <button disabled={a.busy || !review || !policy}>
                   {t("submit")}
                 </button>
-              </form>
-            </section>
-          </div>
-        </>
-      ) : !company ? (
+              </div>
+            </div>
+          </form>
+        </IntakeChat>
+      ) : (
         <p>{t("loading")}</p>
-      ) : null}
+      )}
     </Shell>
   );
 }

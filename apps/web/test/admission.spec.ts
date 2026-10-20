@@ -232,7 +232,7 @@ test("chat first, selected language, private code, editable review, resume and f
   const assistant = await start(page, id);
   await expect(page.getByText(f.code, { exact: true })).toBeVisible();
   expect(f.code).toHaveLength(43);
-  await expect(page.getByRole("heading", { name: /WB-/ })).toHaveCount(0);
+  await expect(page.locator("dd.case-id")).toHaveCount(0);
   expect(f.submitted).toBeNull();
   await selectLanguage(page, id ? "en" : "id");
   await page
@@ -330,9 +330,7 @@ test("chat first, selected language, private code, editable review, resume and f
     )
     .check();
   await submit.click();
-  await expect(
-    page.getByRole("heading", { name: "WB-TEST-1234" }),
-  ).toBeVisible();
+  await expect(page.locator("dd.case-id")).toHaveText("WB-TEST-1234");
   await expect(page.locator("dd.secret")).toHaveCount(2);
   expect(f.submitted).toMatchObject({
     intakeId: f.state.id,
@@ -411,9 +409,7 @@ test("AI failure preserves conversation and allows manual reporting", async ({
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "WB-TEST-1234" }),
-  ).toBeVisible();
+  await expect(page.locator("dd.case-id")).toHaveText("WB-TEST-1234");
 });
 
 test("manual reporting works without AI consent or an email admission gate", async ({
@@ -467,9 +463,7 @@ test("manual reporting works without AI consent or an email admission gate", asy
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "WB-TEST-1234" }),
-  ).toBeVisible();
+  await expect(page.locator("dd.case-id")).toHaveText("WB-TEST-1234");
   expect(f.bodies).toEqual([]);
   expect(f.admissions).toEqual([]);
   expect(f.submitted.aiConsent).toBe(false);
@@ -533,7 +527,7 @@ test("evidence before a message works without AI, resumes and is approved before
   const code = f.code;
   await expect(page.getByText(code, { exact: true })).toBeVisible();
   expect(f.bodies).toEqual([]);
-  await expect(page.getByRole("heading", { name: /WB-/ })).toHaveCount(0);
+  await expect(page.locator("dd.case-id")).toHaveCount(0);
   await page.reload();
   await page
     .getByLabel(label("Continuation code", "Kode untuk melanjutkan"), {
@@ -611,9 +605,7 @@ test("evidence before a message works without AI, resumes and is approved before
       exact: true,
     })
     .click();
-  await expect(
-    page.getByRole("heading", { name: "WB-TEST-1234" }),
-  ).toBeVisible();
+  await expect(page.locator("dd.case-id")).toHaveText("WB-TEST-1234");
   expect(f.submitted).toMatchObject({
     intakeId: f.state.id,
     intakeToken: code,

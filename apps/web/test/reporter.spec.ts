@@ -20,7 +20,7 @@ test("anonymous reporting, secret receipt, private conversation and recovery", a
     .click();
   await expect(
     page.getByRole("heading", {
-      name: id ? "Buat laporan" : "Create a report",
+      name: id ? "Tinjau laporan Anda" : "Review your report",
     }),
   ).toBeVisible();
   await page
@@ -48,10 +48,8 @@ test("anonymous reporting, secret receipt, private conversation and recovery", a
   await page
     .getByRole("button", { name: id ? "Kirim laporan" : "Submit report" })
     .click();
-  await expect(page.getByRole("heading", { name: /WB-/ })).toBeVisible();
-  const caseCode = await page
-    .getByRole("heading", { name: /WB-/ })
-    .textContent();
+  await expect(page.locator("dd.case-id")).toHaveText(/WB-/);
+  const caseCode = await page.locator("dd.case-id").textContent();
   const values = await page.locator("dd.secret").allTextContents();
   expect(values).toHaveLength(2);
   expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
