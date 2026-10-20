@@ -218,12 +218,6 @@ test("form, saved credentials, private AI, reviewed update and resumed history",
     .getByLabel(label("What happened?", "Apa yang terjadi?"), { exact: true })
     .fill("Original submitted report content remains unchanged.");
   await page
-    .getByText(
-      label("Additional details (optional)", "Detail tambahan (opsional)"),
-      { exact: true },
-    )
-    .click();
-  await page
     .getByLabel(
       label("Why did it happen, if known?", "Mengapa terjadi, jika diketahui?"),
       { exact: true },
