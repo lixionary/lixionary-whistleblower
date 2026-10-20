@@ -271,6 +271,11 @@ export async function expire(db: Db, config: Config) {
       sql`delete from admission_grants where (reserved_at is not null and reserved_at<now()-interval '1 day') or (reserved_at is null and (revoked_at is not null or expires_at<now()-interval '1 day'))`,
     );
   });
+  // Unsubmitted intake expiry is independent of configured case retention.
+  await rows(
+    db,
+    sql`delete from intakes where case_id is null and created_at<now()-interval '24 hours'`,
+  );
   const info = (await (await caseCall(config, "retention", {})).json()) as {
     settings: CompanySettings;
     configured: boolean;
@@ -346,10 +351,6 @@ export async function expire(db: Db, config: Config) {
     if (!result.exists)
       await rows(db, sql`delete from intakes where id=${i.id}`);
   }
-  await rows(
-    db,
-    sql`delete from intakes where case_id is null and created_at<now()-interval '24 hours'`,
-  );
   await rows(
     db,
     sql`delete from challenges where expires_at<now()-interval '1 day'`,

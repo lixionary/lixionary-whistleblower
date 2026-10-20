@@ -36,6 +36,20 @@
       "when": 1791723600004,
       "tag": "0004_case_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791723600005,
+      "tag": "0005_drop_employee_directory",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791723600006,
+      "tag": "0006_private_intake",
+      "breakpoints": true
     }
   ]
 }

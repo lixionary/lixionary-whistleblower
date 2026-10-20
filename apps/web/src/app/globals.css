@@ -1236,3 +1236,45 @@ textarea {
 .jira-total {
   font-size: 0.875rem;
 }
+
+/* Private, pre-submission reporting conversation. */
+.intake-chat {
+  max-width: 52rem;
+  margin-inline: auto;
+}
+.intake-messages {
+  display: grid;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.intake-message {
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  overflow-wrap: anywhere;
+}
+.intake-message.user {
+  margin-left: clamp(0rem, 5vw, 3rem);
+  background: var(--surface);
+}
+.intake-message.assistant {
+  margin-right: clamp(0rem, 5vw, 3rem);
+}
+.continuation-card {
+  border-left: 3px solid var(--accent);
+}
+.continuation-code {
+  font-family: monospace;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  margin-block: 1rem;
+}
+[hidden] {
+  display: none !important;
+}

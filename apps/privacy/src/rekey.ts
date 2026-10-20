@@ -12,6 +12,7 @@ try {
       ["contacts", "destination_enc", "contact"],
       ["intakes", "transcript_enc", "intake"],
       ["intakes", "state_enc", "conversation"],
+      ["intakes", "draft_enc", "intake-draft"],
       ["conversation_operations", "input_enc", "conversation-input"],
       ["conversation_operations", "result_enc", "conversation-result"],
       ["delivery_jobs", "body_enc", "job"],

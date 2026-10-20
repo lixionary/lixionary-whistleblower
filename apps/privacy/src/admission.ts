@@ -17,8 +17,10 @@ import {
   internalAuth,
   PrivacyError,
   queue,
+  caseCall,
 } from "./service.js";
 import type { Config } from "./config.js";
+import { reserveIntake, lockIntake } from "./intake.js";
 
 const rawToken = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const accessToken = (req: FastifyRequest) =>
@@ -199,6 +201,43 @@ export async function admissionRoutes(app: FastifyInstance) {
     async (internal) => {
       internal.addHook("preHandler", internalAuth);
 
+      internal.post("/intake/release", async (req) => {
+        const v = z
+          .object({
+            intakeId: z.uuid(),
+            intakeToken: rawToken,
+            caseId: z.uuid(),
+            submissionHash: z.string().regex(/^[a-f0-9]{64}$/),
+          })
+          .parse(req.body);
+        await db.transaction(async (tx) => {
+          await lockIntake(tx, v.intakeId);
+          const [r] = await rows(
+            tx,
+            sql`select id from intakes where id=${v.intakeId} and token_hash=${digest(v.intakeToken)} and case_id=${v.caseId} and submission_hash=${v.submissionHash} for update`,
+          );
+          if (!r) return;
+          const result = (await (
+            await caseCall(config, "case-exists", { caseId: v.caseId })
+          ).json()) as { exists: boolean };
+          if (result.exists) return;
+          await rows(
+            tx,
+            sql`update intakes set case_id=null,submission_hash=null where id=${v.intakeId}`,
+          );
+          await rows(
+            tx,
+            sql`delete from conversation_usage where case_id=${v.caseId}`,
+          );
+          await rows(tx, sql`delete from contacts where case_id=${v.caseId}`);
+          await rows(
+            tx,
+            sql`delete from delivery_jobs where case_id=${v.caseId}`,
+          );
+        });
+        return { ok: true };
+      });
+
       internal.post("/admission/reserve", async (req) => {
         const v = z
           .object({
@@ -220,6 +259,12 @@ export async function admissionRoutes(app: FastifyInstance) {
           .parse(req.body);
         let challengeId: string | undefined;
         await db.transaction(async (tx) => {
+          if (v.intakeId && !v.reportToken) {
+            await reserveIntake(tx, config, {
+              ...v,
+              intakeId: v.intakeId,
+            });
+          }
           if (v.reportToken) {
             const [old] = await rows(
               tx,

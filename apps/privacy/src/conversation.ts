@@ -335,7 +335,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         );
         await rows(
           tx,
-          sql`update intakes set revoked_at=now(),state_enc=null,transcript_enc=${seal([], config.keys, "intake:" + r.id)} where id=${r.id}`,
+          sql`update intakes set revoked_at=now(),state_enc=null,draft_enc=null,transcript_enc=${seal([], config.keys, "intake:" + r.id)} where id=${r.id}`,
         );
       }
     });

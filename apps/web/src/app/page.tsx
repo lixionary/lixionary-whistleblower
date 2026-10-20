@@ -15,6 +15,11 @@ export default function Home() {
             {l.t("report")}
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
+          <Link className="button button-secondary" href="/report#continue">
+            {l.lang === "id"
+              ? "Lanjutkan percakapan"
+              : "Continue a conversation"}
+          </Link>
           <Link className="button button-secondary" href="/case">
             {l.t("portal")}
           </Link>

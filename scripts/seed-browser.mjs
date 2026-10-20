@@ -23,25 +23,6 @@ const result = spawnSync(
   { stdio: "inherit" },
 );
 if (result.status !== 0) process.exit(result.status ?? 1);
-const privateCode = `import postgres from 'postgres'; import {randomUUID} from 'node:crypto'; import {seal,unseal,mac,parseKeyring} from '@whistle/runtime'; if(process.env.NODE_ENV!=='development')throw new Error('Admission fixture reset is limited to development'); const db=postgres(process.env.PRIVACY_DATABASE_URL,{max:1,onnotice:()=>{}}); const keys=parseKeyring(process.env.VAULT_KEYRING),abuse=process.env.PRIVACY_ABUSE_KEY; try {await db.begin(async tx=>{const existing=await tx\`select id,body_enc from employees\`;if(existing.some(e=>!unseal(e.body_enc,keys,'employee:'+e.id).email.startsWith('e2e-')))throw new Error('Non-test employees present; refusing seed'); for(const label of ['desktop','mobile-id','evidence']){const id=randomUUID(),email='e2e-reporter-'+label+'@example.test',body={name:'E2E Reporter '+label,email,phone:'+628123456789'}; const old=await tx\`select id from employees where email_hash=\${mac(abuse,'employee:'+email)}\`; const employeeId=old[0]?.id??id;await tx\`insert into employees(id,email_hash,body_enc,active) values(\${employeeId},\${mac(abuse,'employee:'+email)},\${seal(body,keys,'employee:'+employeeId)},true) on conflict(email_hash) do update set active=true,body_enc=excluded.body_enc\`;}});for(const label of ['desktop','mobile-id','evidence']){const hash=mac(abuse,'employee:e2e-reporter-'+label+'@example.test');await db\`delete from rate_limits where key in (\${'limit:admission-otp:'+hash+':resend'},\${'limit:admission-otp:'+hash+':hour'},\${'limit:admission-otp:'+hash+':day'})\`;}console.log('Development employee fixtures and admission budgets ready.');}finally{await db.end();}`;
-const privateResult = spawnSync(
-  "docker",
-  [
-    "compose",
-    "--env-file",
-    file,
-    "run",
-    "--rm",
-    "--no-deps",
-    "privacy-api",
-    "node",
-    "--input-type=module",
-    "-e",
-    privateCode,
-  ],
-  { stdio: "inherit" },
-);
-if (privateResult.status !== 0) process.exit(privateResult.status ?? 1);
 // Scope submission-budget cleanup to the current development frontend's addresses.
 const web = spawnSync(
   "docker",

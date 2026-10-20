@@ -131,7 +131,7 @@ async function call(
       submissionToken: token(),
     };
     reportToken = reportAdmissions.get(payload.submission.submissionToken);
-    if (!reportToken) {
+    if (!reportToken && !("intakeId" in payload)) {
       reportToken = (await verifiedAccess()).reportToken;
       reportAdmissions.set(payload.submission.submissionToken, reportToken);
     }
@@ -178,6 +178,12 @@ async function withConversation(
     content: any;
     requests: any[];
     provider: { fail: boolean; pause: boolean; release?: () => void };
+    intake: (
+      path: string,
+      body?: unknown,
+      code?: string,
+      method?: string,
+    ) => Promise<any>;
     request: (
       path: string,
       body?: unknown,
@@ -222,8 +228,22 @@ async function withConversation(
         });
       if (provider.fail)
         return new Response("synthetic upstream failure", { status: 503 });
-      const content =
-        input.max_tokens === 4096
+      const content = input.messages[0].content.startsWith(
+        "Create a report draft",
+      )
+        ? JSON.stringify({
+            title: "Suspected procurement misconduct",
+            summary:
+              "The reporter described suspected procurement misconduct in Warehouse A.",
+            category: "corruption",
+            relationship: "contractor_supplier",
+            details: {
+              where: "Warehouse A",
+              why: "",
+              how: "Invoice processing",
+            },
+          })
+        : input.max_tokens === 4096
           ? JSON.stringify({
               summary: "Reviewed structured follow-up",
               details: {
@@ -266,6 +286,23 @@ async function withConversation(
       content,
       requests,
       provider,
+      intake: async (
+        path: string,
+        body?: unknown,
+        code?: string,
+        method?: string,
+      ) =>
+        aiApp.inject({
+          url: "/privacy/intake" + path,
+          method: (method ??
+            (body === undefined ? "GET" : "POST")) as InjectOptions["method"],
+          payload: body as InjectOptions["payload"],
+          headers: {
+            origin,
+            "x-csrf": "1",
+            ...(code ? { "x-intake-code": code } : {}),
+          },
+        }),
       request: async (
         path: string,
         body?: unknown,
@@ -990,10 +1027,16 @@ describe("suite privacy and workflow boundaries", () => {
           method: "POST",
           url: "/privacy/intake",
           headers: { origin, "x-csrf": "1" },
-          payload: { consent: true, locale: "en", policyVersion: 1 },
+          payload: {
+            id: randomUUID(),
+            code: token(),
+            consent: true,
+            locale: "en",
+            policyVersion: 1,
+          },
         })
       ).statusCode,
-    ).toBe(401);
+    ).toBe(409);
     expect(
       (
         await privacy.inject({
@@ -1707,7 +1750,14 @@ describe("suite privacy and workflow boundaries", () => {
         .statusCode,
     ).toBe(400);
     expect(
-      (await call(`/api/admin/employees/${access.id}`, {}, cookies.admin, "PUT")).statusCode,
+      (
+        await call(
+          `/api/admin/employees/${access.id}`,
+          {},
+          cookies.admin,
+          "PUT",
+        )
+      ).statusCode,
     ).toBe(404);
   });
   it("keeps published reports unlinkable to directory records and limits each grant to one submission", async () => {
@@ -1777,9 +1827,7 @@ describe("suite privacy and workflow boundaries", () => {
       const started = await f.start();
       expect(started.statusCode).toBe(200);
       expect(started.json().messages).toHaveLength(1);
-      expect(f.requests[0].messages[0].content).toContain(
-        "OPENING TURN",
-      );
+      expect(f.requests[0].messages[0].content).toContain("OPENING TURN");
       expect(f.requests[0].messages[1].content).toContain("Warehouse A");
       expect(f.requests[0].messages[1].content).toContain("Reply language:");
       const sent = await f.request("/messages", {
@@ -2090,15 +2138,513 @@ describe("suite privacy and workflow boundaries", () => {
       expect(retry.json().messages).toHaveLength(1);
     });
   });
-  it("retires pre-submission AI while retaining legacy submitted transcripts", async () => {
-    const access = await verifiedAccess();
-    const retired = await privacy.inject({
-      method: "POST",
-      url: "/privacy/intake",
-      headers: { origin, "x-csrf": "1", "x-report-access": access.reportToken },
-      payload: { consent: true, policyVersion: 1, locale: "en" },
+  it("keeps anonymous intake private, resumes edits, follows locale and submits exactly once", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token(),
+        start = { id, code, consent: true, policyVersion: 1, locale: "id" };
+      const before = (
+        await rows(caseStore.db, sql`select count(*)::int n from cases`)
+      )[0]!.n;
+      const created = await f.intake("", start);
+      expect(created.statusCode).toBe(200);
+      expect(created.json().messages[0].content).toContain("Halo");
+      expect(created.body).not.toContain(code);
+      expect(created.json()).not.toHaveProperty("caseCode");
+      expect((await f.intake("", start)).json().id).toBe(id);
+      expect((await f.intake("/" + id, undefined, token())).statusCode).toBe(
+        401,
+      );
+      const payload = {
+        requestId: randomUUID(),
+        body: "Private identity clue: suspected invoice misconduct",
+        consent: true,
+        policyVersion: 1,
+        locale: "id",
+      };
+      const sent = await f.intake(`/${id}/messages`, payload, code);
+      expect(sent.statusCode).toBe(200);
+      expect(
+        (await f.intake(`/${id}/messages`, payload, code)).json().usage
+          .messages,
+      ).toBe(1);
+      expect(
+        (
+          await f.intake(
+            `/${id}/messages`,
+            { ...payload, body: "changed" },
+            code,
+          )
+        ).statusCode,
+      ).toBe(409);
+      expect(f.requests.at(-1).messages[0].content).toContain(
+        "Bahasa Indonesia",
+      );
+      const draft = await f.intake(
+        `/${id}/draft`,
+        {
+          requestId: randomUUID(),
+          consent: true,
+          policyVersion: 1,
+          locale: "en",
+        },
+        code,
+      );
+      expect(draft.statusCode).toBe(200);
+      expect(draft.json().draft.category).toBe("corruption");
+      const edited = {
+        ...draft.json().draft,
+        summary: "Only these reviewed facts are shared with investigators.",
+        reporterEmail: "private-notification@example.test",
+      };
+      expect(
+        (
+          await f.intake(
+            `/${id}`,
+            { locale: "en", draft: edited },
+            code,
+            "PATCH",
+          )
+        ).statusCode,
+      ).toBe(200);
+      const resumed = await f.intake("/resume", {}, code);
+      expect(resumed.json().draft).toMatchObject(edited);
+      expect(
+        resumed.json().messages.filter((m: any) => m.role === "user"),
+      ).toHaveLength(1);
+      expect(
+        (await rows(caseStore.db, sql`select count(*)::int n from cases`))[0]!
+          .n,
+      ).toBe(before);
+      expect(JSON.stringify(f.requests)).not.toContain(edited.reporterEmail);
+      const [stored] = await rows(
+        vault.db,
+        sql`select * from intakes where id=${id}`,
+      );
+      expect(JSON.stringify(stored)).not.toContain(code);
+      expect(JSON.stringify(stored)).not.toContain("Private identity clue");
+      const submission = {
+        pin: token(),
+        recoveryCode: token(),
+        submissionToken: token(),
+      };
+      const report = {
+        ...edited,
+        reporterEmail: undefined,
+        intakeId: id,
+        intakeToken: code,
+        policyVersion: 1,
+        privacyReviewed: true,
+        aiConsent: true,
+        submission,
+      };
+      const result = await call("/api/reporter/reports", report);
+      expect(result.statusCode).toBe(201);
+      expect(
+        (await call("/api/reporter/reports", report)).json().caseCode,
+      ).toBe(result.json().caseCode);
+      expect((await f.intake("/resume", {}, code)).json().error).toBe(
+        "intake_submitted",
+      );
+      const duplicate = await call("/api/reporter/reports", {
+        ...report,
+        submission: {
+          pin: token(),
+          recoveryCode: token(),
+          submissionToken: token(),
+        },
+      });
+      expect(duplicate.statusCode).toBe(409);
+      const c = (
+        await call("/api/reporter/case", undefined, cookie(result))
+      ).json();
+      const staff = await call(
+        "/api/cases/" + c.id,
+        undefined,
+        cookies.manager,
+      );
+      expect(staff.body).toContain(edited.summary);
+      expect(staff.body).not.toContain("Private identity clue");
+      expect(staff.body).not.toContain(code);
+      const cap = result.json().capability;
+      const followup = await privateCall(
+        "/conversation",
+        undefined,
+        "GET",
+        cap,
+      );
+      expect(
+        followup
+          .json()
+          .messages.some((m: any) =>
+            m.content.includes("Private identity clue"),
+          ),
+      ).toBe(true);
+      expect(followup.json().usage).toMatchObject({ messages: 1, drafts: 1 });
     });
-    expect(retired.statusCode).toBe(410);
+  });
+  it("preserves failed intake messages, retries without duplicates and enforces consent, policy and expiry", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token(),
+        start = { id, code, consent: true, policyVersion: 1, locale: "en" };
+      expect(
+        (await f.intake("", { ...start, consent: false })).statusCode,
+      ).toBe(400);
+      expect(
+        (await f.intake("", { ...start, policyVersion: 999 })).json().error,
+      ).toBe("policy_changed");
+      expect((await f.intake("", start)).statusCode).toBe(200);
+      f.provider.fail = true;
+      const op = {
+        requestId: randomUUID(),
+        body: "Saved despite provider failure",
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      };
+      expect((await f.intake(`/${id}/messages`, op, code)).json().error).toBe(
+        "ai_unavailable",
+      );
+      const resumed = (await f.intake("/resume", {}, code)).json();
+      expect(resumed.pending).toMatchObject({
+        id: op.requestId,
+        retryable: true,
+      });
+      expect(resumed.messages.at(-1).content).toBe(op.body);
+      const saved = {
+        title: "Manual report following an AI failure",
+        summary: "This report can be completed without another AI response.",
+        category: "fraud",
+      };
+      expect(
+        (
+          await f.intake(
+            `/${id}`,
+            { locale: "en", draft: saved },
+            code,
+            "PATCH",
+          )
+        ).statusCode,
+      ).toBe(200);
+      f.provider.fail = false;
+      const retried = await f.intake(
+        `/${id}/messages`,
+        {
+          requestId: randomUUID(),
+          retryOf: op.requestId,
+          consent: true,
+          policyVersion: 1,
+          locale: "id",
+        },
+        code,
+      );
+      expect(retried.statusCode).toBe(200);
+      expect(
+        retried.json().messages.filter((m: any) => m.role === "user"),
+      ).toHaveLength(1);
+      expect(retried.json().usage.messages).toBe(2);
+      await rows(
+        vault.db,
+        sql`update intakes set created_at=now()-interval '25 hours' where id=${id}`,
+      );
+      expect((await f.intake("/resume", {}, code)).statusCode).toBe(410);
+      expect(
+        (await f.intake(`/${id}`, { locale: "id" }, code, "PATCH")).statusCode,
+      ).toBe(410);
+      const expired = await call("/api/reporter/reports", {
+        ...saved,
+        intakeId: id,
+        intakeToken: code,
+        privacyReviewed: true,
+        policyVersion: 1,
+      });
+      expect(expired.statusCode).toBe(410);
+      await expirePrivate(vault.db, privacy.privacyDeps.config);
+      expect(
+        await rows(vault.db, sql`select id from intakes where id=${id}`),
+      ).toHaveLength(0);
+    });
+  });
+  it("reconciles an intake reservation after a rolled-back case transaction", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token();
+      await f.intake("", {
+        id,
+        code,
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      });
+      await rows(
+        vault.db,
+        sql`update intakes set case_id=${randomUUID()},submission_hash=${digest(token())} where id=${id}`,
+      );
+      expect((await f.intake("/resume", {}, code)).statusCode).toBe(200);
+      const r = await call("/api/reporter/reports", {
+        title: "Reviewed retry after rollback",
+        summary:
+          "A previous case transaction rolled back, and this report can be submitted safely.",
+        category: "fraud",
+        intakeId: id,
+        intakeToken: code,
+        privacyReviewed: true,
+        policyVersion: 1,
+      });
+      expect(r.statusCode).toBe(201);
+      expect((await f.intake("/resume", {}, code)).json().error).toBe(
+        "intake_submitted",
+      );
+    });
+  });
+  it("enforces intake operation leases and allowance, and cannot restore an expired conversation", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token();
+      await f.intake("", {
+        id,
+        code,
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      });
+      f.provider.pause = true;
+      const operation = f.intake(
+        `/${id}/messages`,
+        {
+          requestId: randomUUID(),
+          body: "A private question waiting for the provider",
+          consent: true,
+          policyVersion: 1,
+          locale: "en",
+        },
+        code,
+      );
+      try {
+        await expect.poll(() => !!f.provider.release).toBe(true);
+        const busy = await f.intake(
+          `/${id}/messages`,
+          {
+            requestId: randomUUID(),
+            body: "Concurrent message",
+            consent: true,
+            policyVersion: 1,
+            locale: "en",
+          },
+          code,
+        );
+        expect(busy.statusCode).toBe(409);
+        const blocked = await call("/api/reporter/reports", {
+          title: "Attempt while AI is running",
+          summary:
+            "A reviewed report cannot submit during an active assistant operation.",
+          category: "fraud",
+          intakeId: id,
+          intakeToken: code,
+          privacyReviewed: true,
+          policyVersion: 1,
+        });
+        expect(blocked.statusCode).toBe(409);
+        await rows(
+          vault.db,
+          sql`update intakes set created_at=now()-interval '25 hours' where id=${id}`,
+        );
+      } finally {
+        f.provider.release?.();
+      }
+      expect((await operation).statusCode).toBe(410);
+      const [retained] = await rows(
+        vault.db,
+        sql`select transcript_enc from intakes where id=${id}`,
+      );
+      expect(
+        unseal<any[]>(
+          String(retained!.transcript_enc),
+          vaultRing,
+          "intake:" + id,
+        ),
+      ).toHaveLength(2);
+      const other = randomUUID(),
+        otherCode = token();
+      await f.intake("", {
+        id: other,
+        code: otherCode,
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      });
+      for (let n = 0; n < 30; n++) {
+        const op = randomUUID();
+        await rows(
+          vault.db,
+          sql`insert into conversation_operations(id,intake_id,kind,input_enc,status,lease_until) values(${op},${other},'messages',${seal({}, vaultRing, "conversation-input:" + op)},'done',now())`,
+        );
+      }
+      const exhausted = await f.intake(
+        `/${other}/messages`,
+        {
+          requestId: randomUUID(),
+          body: "No extra provider attempt",
+          consent: true,
+          policyVersion: 1,
+          locale: "en",
+        },
+        otherCode,
+      );
+      expect(exhausted.json().error).toBe("conversation_limit");
+      const saved = await f.intake(
+        `/${other}`,
+        {
+          locale: "en",
+          draft: {
+            title: "Manual report after allowance",
+            summary:
+              "This reviewed report is completed without consuming another AI attempt.",
+            category: "fraud",
+          },
+        },
+        otherCode,
+        "PATCH",
+      );
+      expect(saved.statusCode).toBe(200);
+      const manual = await call("/api/reporter/reports", {
+        ...saved.json().draft,
+        intakeId: other,
+        intakeToken: otherCode,
+        privacyReviewed: true,
+        policyVersion: 1,
+      });
+      expect(manual.statusCode).toBe(201);
+    });
+  });
+  it("releases a private reservation after a real case-write rollback so chat can continue", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token();
+      await f.intake("", {
+        id,
+        code,
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      });
+      const report = {
+        title: "Reviewed concern after a database rollback",
+        summary:
+          "This reviewed report should be safely retried after the database transaction fails.",
+        category: "fraud",
+        intakeId: id,
+        intakeToken: code,
+        privacyReviewed: true,
+        policyVersion: 1,
+      };
+      await rows(
+        caseStore.db,
+        sql`create function test_fail_intake_insert() returns trigger language plpgsql as $$ begin raise exception 'synthetic case write failure'; return NEW; end $$`,
+      );
+      await rows(
+        caseStore.db,
+        sql`create trigger test_intake_rollback before insert on cases for each row execute function test_fail_intake_insert()`,
+      );
+      try {
+        expect((await call("/api/reporter/reports", report)).statusCode).toBe(
+          500,
+        );
+        const [r] = await rows(
+          vault.db,
+          sql`select case_id,submission_hash from intakes where id=${id}`,
+        );
+        expect(r).toMatchObject({ case_id: null, submission_hash: null });
+      } finally {
+        await rows(
+          caseStore.db,
+          sql`drop trigger if exists test_intake_rollback on cases`,
+        );
+        await rows(
+          caseStore.db,
+          sql`drop function if exists test_fail_intake_insert()`,
+        );
+      }
+      const continued = await f.intake(
+        `/${id}/messages`,
+        {
+          requestId: randomUUID(),
+          body: "Additional facts after the failed submission",
+          consent: true,
+          policyVersion: 1,
+          locale: "en",
+        },
+        code,
+      );
+      expect(continued.statusCode).toBe(200);
+      const retry = await call("/api/reporter/reports", report);
+      expect(retry.statusCode).toBe(201);
+      expect((await f.intake("/resume", {}, code)).json().error).toBe(
+        "intake_submitted",
+      );
+    });
+  });
+  it("creates one case when two browsers submit the same intake concurrently", async () => {
+    await withConversation(async (f) => {
+      const id = randomUUID(),
+        code = token();
+      await f.intake("", {
+        id,
+        code,
+        consent: true,
+        policyVersion: 1,
+        locale: "en",
+      });
+      const before = (
+        await rows(caseStore.db, sql`select count(*)::int n from cases`)
+      )[0]!.n;
+      const base = {
+        title: "Concern submitted concurrently",
+        summary:
+          "Two browser sessions independently review and submit the same private conversation.",
+        category: "fraud",
+        intakeId: id,
+        intakeToken: code,
+        privacyReviewed: true,
+        policyVersion: 1,
+      };
+      const attempts = [
+        {
+          ...base,
+          submission: {
+            pin: token(),
+            recoveryCode: token(),
+            submissionToken: token(),
+          },
+        },
+        {
+          ...base,
+          submission: {
+            pin: token(),
+            recoveryCode: token(),
+            submissionToken: token(),
+          },
+        },
+      ];
+      const results = await Promise.all(
+        attempts.map((report) => call("/api/reporter/reports", report)),
+      );
+      expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409]);
+      expect(
+        (await rows(caseStore.db, sql`select count(*)::int n from cases`))[0]!
+          .n,
+      ).toBe(Number(before) + 1);
+      const winner = results.findIndex((r) => r.statusCode === 201);
+      expect(
+        (await call("/api/reporter/reports", attempts[winner])).json().caseCode,
+      ).toBe(results[winner]!.json().caseCode);
+      expect((await f.intake("/resume", {}, code)).json().error).toBe(
+        "intake_submitted",
+      );
+    });
+  });
+  it("retains legacy submitted transcripts", async () => {
     await withConversation(async (f) => {
       const [r] = await rows(
         vault.db,
@@ -2135,10 +2681,12 @@ describe("suite privacy and workflow boundaries", () => {
       (await call("/api/admin/employees", undefined, cookies.admin)).statusCode,
     ).toBe(404);
     expect(
-      (await call("/api/admin/employees/123", {}, cookies.admin, "PUT")).statusCode,
+      (await call("/api/admin/employees/123", {}, cookies.admin, "PUT"))
+        .statusCode,
     ).toBe(404);
     expect(
-      (await call("/api/admin/employee-requests", undefined, cookies.admin)).statusCode,
+      (await call("/api/admin/employee-requests", undefined, cookies.admin))
+        .statusCode,
     ).toBe(404);
   });
   it("retries a reserved report after a failed case commit and refuses a second concurrent submission", async () => {

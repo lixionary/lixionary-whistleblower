@@ -24,39 +24,39 @@ Source: [company configuration and teams](../apps/server/src/routes/admin.ts), [
 
 ## 3. Reporter entry and submission
 
-1. Open `/` and choose **Report**, which opens `/report`. English and Indonesian are available.
-2. Read the company policy and privacy notice and acknowledge reading them.
-3. Enter a title, summary, and category. Additional details can describe what happened, who was involved, when, where, why, how, how the reporter knows, available evidence, impact, and whether the conduct continues. These additional details are optional; uncertainty can be stated explicitly.
-4. Select a relationship: employee, former employee, contractor/supplier, or external. Select a business unit if offered.
-5. Mark the report sensitive if it involves leadership or the reporting team. This selects the independent restricted route.
-6. Optionally supply an email for private notifications. Leaving it blank is supported. Optional AI consent appears when the company enables AI.
-7. Review the narrative for identifying or unnecessary sensitive details, confirm the review, and submit.
+1. Open `/report`. The private assistant immediately greets the reporter and asks what happened in the selected language (English or Indonesian).
+2. Read the policy and privacy notice inline and acknowledge them. Consent is required before sending any content to MiniMax. No report form or email-verification gate precedes the conversation.
+3. Send the first message. The privacy service creates an encrypted private intake and displays one secret **continuation code**. Save it: anyone holding it can access the unfinished conversation. It is not a report number.
+4. Continue answering focused questions. Changing the language selector changes subsequent replies and generated drafts; earlier messages stay in their original language. Unknown facts can remain unknown.
+5. Return using **Continue a conversation** on the home or report page and enter the code. Messages and saved review edits are restored across devices. The code expires exactly **24 hours after creation**, without extension, and expired unsubmitted conversations are deleted by cleanup.
+6. Choose **Review report** to generate an editable report. Review the title, summary, optional details, category, relationship, business unit, and independent sensitive-routing choice. Review edits are saved privately; a Save draft action is also available. Optional notification email is never sent to AI.
+7. Confirm the current policy and review the report for identifying information, then explicitly **Submit report**. Only this approved report enters the staff workspace. Conversation messages alone never create a case or alert staff.
 
-The current form starts directly with the report. Email verification is **not an admission step**. The optional email is removed from the staff-visible report and stored in the privacy service. Uploaded evidence is handled later, from the case portal.
+**Use a form instead** remains available when consent is declined, AI is disabled, the provider fails, or AI allowance runs out. Existing review edits or the latest generated draft are preserved; the reporter can complete the form without another AI request. Evidence upload remains a post-submission action in the case portal.
 
-The server checks the current policy version and configured categories/business units. If the policy changes while the form is open, the reporter must review the updated policy and confirm again. Submission retries from the same page reuse the submission identifier and credentials to avoid creating duplicate cases. Unsaved form and retry state are held in browser memory.
+Continuation codes are held only in browser memory and stored as hashes in the privacy database. They do not appear in URLs, logs, or browser storage. Save or download the code before leaving the page. Optional contact verification is offered only after submission for notifications, never admission or email recovery.
+
+The server checks current company policy, categories, and business units. A policy change requires fresh acknowledgment. Submission retries reuse the browser's submission identifier and case secrets. Intake reservation prevents concurrent browsers from creating separate cases from the same conversation and permits retry after a rolled-back case transaction. Successful submission retires continuation-code access; use the final case credentials thereafter. As with the existing receipt, final secrets cannot be retrieved after reloading an unsaved receipt.
 
 ```mermaid
 flowchart TD
-    Start["Open the reporting portal"] --> Policy["Read policy and privacy notice"]
-    Policy --> Form["Complete the report form"]
-    Form --> Options["Choose sensitive routing and optional email or AI consent"]
-    Options --> Review["Review content and confirm submission"]
-    Review --> Create["Create case in received state"]
-    Create --> Route{"Sensitive report?"}
-    Route -->|No| Normal["Route to normal team"]
-    Route -->|Yes| Restricted["Route to independent restricted team"]
-    Normal --> Alert["Queue a generic staff alert"]
-    Restricted --> Alert
-    Create --> Receipt["Display case code, access secret, and recovery secret"]
-    Receipt --> Email{"Optional email challenge offered?"}
-    Email -->|Yes| OTP["Verify email now, or defer until later"]
-    Email -->|No| Save["Save credentials and confirm they are saved"]
-    OTP --> Save
-    Save --> Portal["Open the private case portal"]
+    Start["Open reporting chat in selected language"] --> Greet["Assistant greeting and first question"]
+    Greet --> Consent["Inline policy acknowledgment and AI consent"]
+    Consent --> Chat["First message creates private intake"]
+    Chat --> Code["Save continuation code: expires 24 hours from creation"]
+    Code --> Continue["Continue now or resume with code"]
+    Continue --> Draft["Generate editable report"]
+    Greet --> Manual["Optional manual form without AI"]
+    Continue --> Manual
+    Draft --> Review["Review facts, routing, optional email and privacy"]
+    Manual --> Review
+    Review --> Submit["Explicitly submit reviewed report"]
+    Submit --> Case["Create received case and route to normal or restricted team"]
+    Case --> Receipt["Display report number, access secret and recovery secret"]
+    Receipt --> Portal["Save credentials and open case portal"]
 ```
 
-Source: [public home](../apps/web/src/app/page.tsx), [report form](../apps/web/src/app/report/page.tsx), [submission API](../apps/server/src/routes/reporter.ts), [current report schema](../packages/shared/src/suite.ts), [privacy reservation](../apps/privacy/src/admission.ts).
+Source: [reporting page](../apps/web/src/app/report/page.tsx), [private intake API](../apps/privacy/src/intake.ts), [submission API](../apps/server/src/routes/reporter.ts), and [private reservation](../apps/privacy/src/admission.ts).
 
 ## 4. Receipt, notifications, and returning to a case
 
@@ -145,11 +145,11 @@ flowchart LR
 
 ### Optional private assistant
 
-With company enablement, provider configuration, and reporter consent, the assistant can ask follow-up questions after the report has been submitted and the case portal opened. It uses the submitted information to clarify missing facts; it does not take the manager's or analyst's role.
+With company enablement, provider configuration, and reporter consent, the assistant continues privately after submission through the case portal. The pre-submission transcript remains private and is accessible through case credentials. It uses the submitted information to clarify missing facts; it does not take the manager's or analyst's role.
 
 The raw conversation and generated review drafts stay in the privacy service. **Review update** produces an editable structured follow-up. Only an update explicitly reviewed and shared by the reporter becomes a case mailbox message. The original report remains unchanged.
 
-AI allows 30 message attempts, including initialization, and three update-generation attempts per case per UTC day. Provider failures consume an attempt; replaying an existing request does not. Declining AI, provider failure, or exhausted AI allowance does not prevent ordinary reporting or case access. Retention and legal holds apply to private history; it is not promised indefinitely.
+AI allows 30 message attempts and three draft-generation attempts per intake per UTC day. The localized static intake greeting does not consume an attempt. Submission carries intake usage into the case allowance; case assistant initialization consumes a message attempt when needed. Provider failures consume an attempt; replaying an existing request does not. Declining AI, provider failure, or exhausted AI allowance does not prevent ordinary reporting or case access. Retention and legal holds apply to private history; it is not promised indefinitely.
 
 ```mermaid
 flowchart TD

@@ -1,483 +1,453 @@
-import { test, expect } from "@playwright/test";
-import { defaultSettings } from "@whistle/shared";
-const reportToken = "r".repeat(43),
-  challengeId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-for (const scenario of [
-  "report",
-  "unregistered",
-  "disabled",
-  "ai",
-  "wrong-otp",
-  "delivery-error",
-  "cancel",
-  "expired",
-  "cancel-verification",
-] as const)
-  test(`employee gate: ${scenario}`, async ({ page }, info) => {
-    const id = info.project.name === "mobile-id",
-      label = (en: string, indo: string) => (id ? indo : en);
-    await page.addInitScript(
-      (lang) => localStorage.setItem("wb_language", lang),
-      id ? "id" : "en",
-    );
-    const seen: { path: string; body: any; access: string | undefined }[] = [];
-    let releaseVerify: (() => void) | undefined;
-    const pendingVerify = new Promise<void>((resolve) => {
-      releaseVerify = resolve;
+import { test, expect, type Page } from "@playwright/test";
+import {
+  defaultSettings,
+  intakeGreeting,
+  intakeReviewSchema,
+  type PrivateIntakeView,
+} from "@whistle/shared";
+import { selectLanguage } from "./language";
+
+async function fixture(page: Page, lang: "en" | "id") {
+  await page.addInitScript((l) => localStorage.setItem("wb_language", l), lang);
+  let code = "",
+    submitted: any = null;
+  const bodies: any[] = [],
+    admissions: string[] = [];
+  const state: PrivateIntakeView = {
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    locale: lang,
+    expiresAt: new Date(Date.now() + 86400000).toISOString(),
+    policyVersion: 1,
+    needsConsent: false,
+    aiEnabled: true,
+    messages: [],
+    draft: null,
+    pending: null,
+    usage: {
+      messages: 0,
+      drafts: 0,
+      resetsAt: new Date(Date.now() + 86400000).toISOString(),
+    },
+  };
+  const f = {
+    state,
+    bodies,
+    admissions,
+    fail: false,
+    disabled: false,
+    expired: false,
+    policy: 1,
+    get code() {
+      return code;
+    },
+    get submitted() {
+      return submitted;
+    },
+  };
+  await page.route("**/api/reporter/company", (route) =>
+    route.fulfill({
+      json: { ...defaultSettings, aiEnabled: !f.disabled, version: f.policy },
+    }),
+  );
+  await page.route("**/api/reporter/reports", (route) => {
+    submitted = route.request().postDataJSON();
+    return route.fulfill({
+      status: 201,
+      json: {
+        caseCode: "WB-TEST-1234",
+        pin: "synthetic-access",
+        recoveryCode: "synthetic-recovery",
+      },
     });
-    let verifyAttempts = 0;
-    let verified = false,
-      submitted = false;
-    await page.route("**/api/reporter/company", (route) =>
-      route.fulfill({
-        json: {
-          ...defaultSettings,
-          version: 1,
-          aiEnabled:
-            scenario === "ai" ||
-            scenario === "unregistered" ||
-            scenario === "disabled",
-        },
-      }),
+  });
+  await page.route("**/privacy/**", async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname,
+      body = req.postData() ? req.postDataJSON() : undefined;
+    if (path.includes("/admission/")) {
+      admissions.push(path);
+      return route.fulfill({
+        status: 500,
+        json: { error: "unexpected_admission" },
+      });
+    }
+    if (path === "/privacy/intake") {
+      code = body.code;
+      state.id = body.id;
+      state.messages = [
+        { role: "assistant", content: intakeGreeting(body.locale) },
+      ];
+      return route.fulfill({ json: state });
+    }
+    expect(req.headers()["x-intake-code"]).toBe(
+      code || req.headers()["x-intake-code"],
     );
-    await page.route("**/privacy/admission/**", async (route) => {
-      const path = new URL(route.request().url()).pathname,
-        body = route.request().postDataJSON();
-      seen.push({
-        path,
-        body,
-        access: route.request().headers()["x-report-access"],
-      });
-      if (path.endsWith("challenge") && scenario === "delivery-error")
-        return route.fulfill({
-          status: 503,
-          json: { error: "email_unavailable" },
-        });
-      if (path.endsWith("challenge"))
-        return route.fulfill({
-          json:
-            scenario === "unregistered" || scenario === "disabled"
-              ? { status: scenario }
-              : { status: "otp", challengeId, expiresIn: 300, resendAfter: 60 },
-        });
-      if (path.endsWith("verify")) {
-        if (scenario === "wrong-otp" && verifyAttempts++ === 0)
-          return route.fulfill({
-            status: 400,
-            json: { error: "invalid_or_expired_code" },
-          });
-        if (scenario === "cancel-verification") await pendingVerify;
-        verified = true;
-        return route.fulfill({
-          json: { reportToken, expiresIn: 7200 },
-        });
-      }
-      return route.fulfill({ json: { state: "pending", ok: true } });
-    });
-    await page.route("**/api/reporter/reports", async (route) => {
-      const body = route.request().postDataJSON();
-      seen.push({
-        path: "/api/reporter/reports",
-        body,
-        access: route.request().headers()["x-report-access"],
-      });
-      if (scenario === "expired" && !submitted) {
-        submitted = true;
+    if (f.expired)
+      return route.fulfill({ status: 410, json: { error: "intake_expired" } });
+    if (path.endsWith("/resume")) {
+      if (req.headers()["x-intake-code"] !== code || submitted)
         return route.fulfill({
           status: 401,
-          json: { error: "report_access_required" },
+          json: { error: "invalid_intake" },
+        });
+      return route.fulfill({ json: state });
+    }
+    if (req.method() === "DELETE") {
+      state.messages = [];
+      return route.fulfill({ json: { ok: true } });
+    }
+    if (req.method() === "PATCH") {
+      state.locale = body.locale;
+      if (body.draft) state.draft = body.draft;
+      return route.fulfill({ json: state });
+    }
+    if (req.method() === "GET") return route.fulfill({ json: state });
+    bodies.push({ path, ...body });
+    if (body.policyVersion !== f.policy)
+      return route.fulfill({ status: 409, json: { error: "policy_changed" } });
+    if (path.endsWith("/messages")) {
+      state.usage.messages++;
+      if (!body.retryOf)
+        state.messages.push({ role: "user", content: body.body });
+      if (f.fail) {
+        state.pending = {
+          id: body.requestId,
+          kind: "messages",
+          retryable: true,
+        };
+        return route.fulfill({
+          status: 503,
+          json: { error: "ai_unavailable" },
         });
       }
-      return route.fulfill({
-        status: 201,
-        json: {
-          caseCode: "WB-TEST-1234",
-          pin: "synthetic-pin",
-          recoveryCode: "synthetic-recovery",
-        },
+      state.pending = null;
+      state.messages.push({
+        role: "assistant",
+        content:
+          body.locale === "id"
+            ? "Kapan kejadian ini terjadi?"
+            : "When did this happen?",
       });
-    });
-    if (scenario === "ai") {
-      await page.goto("/");
-      await page
-        .getByRole("link", {
-          name: label("Create a report", "Buat laporan"),
-          exact: true,
-        })
-        .first()
-        .click();
-    } else await page.goto("/report");
-
-    const dialog = page.getByRole("dialog");
-    await expect(dialog).toBeVisible();
-    await expect(
-      page.getByLabel(label("Title", "Judul"), { exact: true }),
-    ).toHaveCount(0);
-    await expect(dialog.locator('option[value="phone"]')).toHaveAttribute(
-      "disabled",
-      "",
-    );
-    await dialog
-      .getByLabel("Email", { exact: true })
-      .fill("employee@example.test");
-    if (scenario === "cancel") {
-      await page.keyboard.press("Escape");
-      await expect(dialog).toHaveCount(0);
-      await page
-        .getByRole("button", {
-          name: label("Verify email", "Verifikasi email"),
-          exact: true,
-        })
-        .click();
-      await expect(
-        page.getByRole("dialog").getByLabel("Email", { exact: true }),
-      ).toHaveValue("");
-      return;
     }
-    await dialog
-      .getByRole("button", {
-        name: label("Continue", "Lanjutkan"),
-        exact: true,
-      })
-      .click();
-    if (scenario === "delivery-error") {
-      await expect(dialog.getByRole("alert")).toBeVisible();
-      await expect(dialog.getByLabel("Email", { exact: true })).toBeVisible();
-      await expect(
-        page.getByLabel(label("Title", "Judul"), { exact: true }),
-      ).toHaveCount(0);
-      expect(verified).toBe(false);
-      expect(seen.map((r) => r.path)).toEqual(["/privacy/admission/challenge"]);
-      return;
+    if (path.endsWith("/draft")) {
+      state.usage.drafts++;
+      state.draft = intakeReviewSchema.parse({
+        title: "Generated concern for review",
+        summary:
+          "The reporter described a procurement concern that investigators should review.",
+        category: "fraud",
+        locale: body.locale,
+        details: { where: "Warehouse A" },
+      });
     }
-    if (scenario === "unregistered" || scenario === "disabled") {
-      await expect(dialog.getByRole("status")).toContainText(
-        label(
-          scenario === "unregistered"
-            ? "This email is not registered"
-            : "Your reporting access is disabled",
-          scenario === "unregistered"
-            ? "Email ini belum terdaftar"
-            : "Akses pelaporan Anda dinonaktifkan",
-        ),
-      );
-      await expect(
-        page.getByLabel(label("Title", "Judul"), { exact: true }),
-      ).toHaveCount(0);
-      await expect(
-        page.getByRole("button", {
-          name: label(
-            "Use optional assisted intake",
-            "Gunakan panduan AI opsional",
-          ),
-          exact: true,
-        }),
-      ).toHaveCount(0);
-      await expect(
-        dialog.getByLabel(label("Verification code", "Kode verifikasi")),
-      ).toHaveCount(0);
-      await expect(
-        dialog.getByLabel(label("Name", "Nama"), { exact: true }),
-      ).toHaveCount(0);
-      expect(seen.map((r) => r.path)).toEqual(["/privacy/admission/challenge"]);
-      expect(seen[0]!.body.purpose).toBe("report");
-      await dialog
-        .getByRole("button", {
-          name: label("Try another email", "Coba email lain"),
-          exact: true,
-        })
-        .click();
-      await expect(dialog.getByLabel("Email", { exact: true })).toHaveValue("");
-      await dialog
-        .getByRole("button", { name: label("Close", "Tutup"), exact: true })
-        .click();
-      await expect(dialog).toHaveCount(0);
-      return;
-    }
-    await dialog
-      .getByLabel(label("Verification code", "Kode verifikasi"), {
-        exact: true,
-      })
-      .fill("123456");
-    const verificationResponse =
-      scenario === "cancel-verification"
-        ? page.waitForResponse((r) =>
-            r.url().endsWith("/privacy/admission/verify"),
-          )
-        : undefined;
-    await dialog
-      .getByRole("button", { name: label("Verify", "Verifikasi"), exact: true })
-      .click();
-    if (scenario === "wrong-otp") {
-      await expect(dialog.getByRole("alert")).toBeVisible();
-      await expect(
-        page.getByLabel(label("Title", "Judul"), { exact: true }),
-      ).toHaveCount(0);
-      expect(verified).toBe(false);
-      await dialog
-        .getByLabel(label("Verification code", "Kode verifikasi"), {
-          exact: true,
-        })
-        .fill("654321");
-      await dialog
-        .getByRole("button", {
-          name: label("Verify", "Verifikasi"),
-          exact: true,
-        })
-        .click();
-    }
-    if (scenario === "cancel-verification") {
-      await expect
-        .poll(() => seen.some((r) => r.path.endsWith("/verify")))
-        .toBe(true);
-      await dialog
-        .getByRole("button", { name: label("Close", "Tutup"), exact: true })
-        .click();
-      releaseVerify!();
-      await (await verificationResponse!).finished();
-      await page.evaluate(
-        () =>
-          new Promise<void>((resolve) =>
-            requestAnimationFrame(() => resolve()),
-          ),
-      );
-      await expect
-        .poll(() =>
-          seen.some(
-            (r) =>
-              r.path.endsWith("/cancel") && r.body.reportToken === reportToken,
-          ),
-        )
-        .toBe(true);
-      expect(seen.some((r) => r.path.endsWith("/requests"))).toBe(false);
-      await expect(
-        page.getByLabel(label("Title", "Judul"), { exact: true }),
-      ).toHaveCount(0);
-      await expect(dialog).toHaveCount(0);
-      return;
-    }
-
-    await expect(dialog).toHaveCount(0);
-    expect(verified).toBe(true);
-    await page
-      .getByLabel(label("Title", "Judul"), { exact: true })
-      .fill("My preserved concern");
-    await page
-      .getByLabel(label("What happened?", "Apa yang terjadi?"), { exact: true })
-      .fill(
-        "Synthetic report content that remains anonymous to the review team.",
-      );
-    await page
-      .getByLabel(
-        label(
-          "I have read the policy and privacy notice.",
-          "Saya telah membaca kebijakan dan pemberitahuan privasi.",
-        ),
-      )
-      .check();
-    if (scenario === "ai") {
-      await page
-        .getByLabel(
-          label(
-            "I consent to MiniMax processing my submitted report and private follow-up conversation. I will review updates before sharing them with investigators.",
-            "Saya menyetujui MiniMax memproses laporan terkirim dan percakapan tindak lanjut pribadi saya. Saya akan meninjau pembaruan sebelum membagikannya kepada penyelidik.",
-          ),
-        )
-        .check();
-      await expect(
-        page.getByRole("button", {
-          name: label(
-            "Use optional assisted intake",
-            "Gunakan panduan AI opsional",
-          ),
-          exact: true,
-        }),
-      ).toHaveCount(0);
-    }
-
-    await page
-      .getByLabel(
-        label(
-          "I reviewed this content and removed details that could identify me.",
-          "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
-        ),
-      )
-      .check();
-    await page
-      .getByRole("button", {
-        name: label("Submit report", "Kirim laporan"),
-        exact: true,
-      })
-      .click();
-    if (scenario === "expired") {
-      const retryDialog = page.getByRole("dialog");
-      await expect(retryDialog).toBeVisible();
-      await expect(
-        page.getByLabel(label("Title", "Judul"), { exact: true }),
-      ).toHaveValue("My preserved concern");
-      await retryDialog
-        .getByLabel("Email", { exact: true })
-        .fill("employee@example.test");
-      await retryDialog
-        .getByRole("button", {
-          name: label("Continue", "Lanjutkan"),
-          exact: true,
-        })
-        .click();
-      await retryDialog
-        .getByLabel(label("Verification code", "Kode verifikasi"), {
-          exact: true,
-        })
-        .fill("123456");
-      await retryDialog
-        .getByRole("button", {
-          name: label("Verify", "Verifikasi"),
-          exact: true,
-        })
-        .click();
-      await expect(retryDialog).toHaveCount(0);
-      expect(
-        seen.filter((r) => r.path === "/api/reporter/reports"),
-      ).toHaveLength(1);
-      expect(
-        seen.filter((r) => r.path.endsWith("/verify")).at(-1)?.body.resumeToken,
-      ).toBe(reportToken);
-      await page
-        .getByRole("button", {
-          name: label("Submit report", "Kirim laporan"),
-          exact: true,
-        })
-        .click();
-    }
-    await expect(
-      page.getByRole("heading", { name: "WB-TEST-1234" }),
-    ).toBeVisible();
-    expect(
-      seen
-        .filter((r) => r.path === "/api/reporter/reports")
-        .every((r) => r.access === reportToken),
-    ).toBe(true);
-    if (scenario === "ai") {
-      const report = seen.find((r) => r.path === "/api/reporter/reports");
-      expect(report?.body).toMatchObject({ aiConsent: true });
-      expect(report?.body).not.toHaveProperty("intakeId");
-    }
-    expect(
-      await page.evaluate(() =>
-        JSON.stringify({ ...localStorage, ...sessionStorage }),
-      ),
-    ).not.toContain(reportToken);
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
+    return route.fulfill({ json: state });
   });
-test("administrator manages employees and reviews access requests", async ({
+  return f;
+}
+async function start(page: Page, id: boolean) {
+  const label = (en: string, indo: string) => (id ? indo : en);
+  const assistant = page.getByRole("region", {
+    name: label("Private reporting assistant", "Asisten pelaporan pribadi"),
+    exact: true,
+  });
+  await assistant
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  await assistant.getByLabel(/MiniMax/).check();
+  await assistant
+    .getByLabel(label("Message to assistant", "Pesan untuk asisten"))
+    .fill("I saw a suspicious invoice in Warehouse A.");
+  await assistant
+    .getByRole("button", { name: label("Send", "Kirim"), exact: true })
+    .click();
+  return assistant;
+}
+
+test("chat first, selected language, private code, editable review, resume and final receipt", async ({
   page,
 }, info) => {
   const id = info.project.name === "mobile-id",
     label = (en: string, indo: string) => (id ? indo : en),
-    personId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
-  await page.addInitScript(
-    (lang) => localStorage.setItem("wb_language", lang),
-    id ? "id" : "en",
-  );
-  let employees: any[] = [];
-  const actions: any[] = [];
-  await page.route("**/api/**", async (route) => {
-    const path = new URL(route.request().url()).pathname,
-      method = route.request().method(),
-      body = route.request().postData() ? route.request().postDataJSON() : null;
-    if (path === "/api/staff/me")
-      return route.fulfill({
-        json: {
-          id: personId,
-          email: "admin@example.test",
-          name: "Admin",
-          role: "admin",
-          mfaEnrolled: true,
-          mfaVerified: true,
-        },
-      });
-    if (path === "/api/admin/employees" && method === "GET")
-      return route.fulfill({
-        json: { items: employees, total: employees.length, page: 1 },
-      });
-    if (path === "/api/admin/employees" && method === "POST") {
-      actions.push(body);
-      employees = [{ ...body, id: personId }];
-      return route.fulfill({ json: { id: personId } });
-    }
-    if (path === "/api/admin/employee-requests")
-      return route.fulfill({
-        json: {
-          items: [
-            {
-              id: personId,
-              name: "Applicant",
-              email: "applicant@example.test",
-              phone: "+628123456789",
-              state: "pending",
-            },
-          ],
-          total: 1,
-          page: 1,
-        },
-      });
-    if (path.endsWith("/resolve")) {
-      actions.push(body);
-      return route.fulfill({ json: { ok: true } });
-    }
-    return route.fulfill({ json: {} });
-  });
-  await page.goto("/staff/admin/employees");
+    f = await fixture(page, id ? "id" : "en");
+  await page.goto("/report");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
-    page.getByRole("heading", {
-      name: label("Employees", "Karyawan"),
+    page.getByRole("textbox", { name: label("Title", "Judul"), exact: true }),
+  ).not.toBeVisible();
+  await expect(page.getByRole("log")).toContainText(id ? "Halo" : "Hello");
+  expect(f.bodies).toEqual([]);
+  const assistant = await start(page, id);
+  await expect(page.getByText(f.code, { exact: true })).toBeVisible();
+  expect(f.code).toHaveLength(43);
+  await expect(page.getByRole("heading", { name: /WB-/ })).toHaveCount(0);
+  expect(f.submitted).toBeNull();
+  await selectLanguage(page, id ? "en" : "id");
+  await page
+    .getByLabel(id ? "Message to assistant" : "Pesan untuk asisten")
+    .fill("It happened yesterday.");
+  await page
+    .getByRole("button", { name: id ? "Send" : "Kirim", exact: true })
+    .click();
+  await expect.poll(() => f.bodies.at(-1)?.locale).toBe(id ? "en" : "id");
+  await selectLanguage(page, id ? "id" : "en");
+  await assistant
+    .getByRole("button", {
+      name: label("Review report", "Tinjau laporan"),
+      exact: true,
+    })
+    .click();
+  const review = page.getByRole("form", {
+    name: label("Review report", "Tinjau laporan"),
+    exact: true,
+  });
+  await review
+    .getByRole("textbox", {
+      name: label("What happened?", "Apa yang terjadi?"),
+      exact: true,
+    })
+    .fill(
+      "Only this edited and reviewed report reaches the investigation team.",
+    );
+  await page
+    .getByRole("button", {
+      name: label("Save draft", "Simpan draf"),
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => f.state.draft?.summary).toContain("Only this edited");
+  const code = f.code;
+  await page.reload();
+  await page
+    .getByLabel(label("Continuation code", "Kode untuk melanjutkan"), {
+      exact: true,
+    })
+    .fill(code);
+  await page
+    .getByRole("button", {
+      name: label("Continue conversation", "Lanjutkan percakapan"),
+      exact: true,
+    })
+    .click();
+  await expect(page.getByRole("log")).toContainText("It happened yesterday.");
+  await page
+    .getByRole("button", {
+      name: label("Review report", "Tinjau laporan"),
+      exact: true,
+    })
+    .click();
+  await expect(
+    review.getByRole("textbox", {
+      name: label("What happened?", "Apa yang terjadi?"),
       exact: true,
     }),
-  ).toBeVisible();
-  await page
-    .getByLabel(label("Name", "Nama"), { exact: true })
-    .fill("Registered employee");
-  await page.getByLabel("Email", { exact: true }).fill("employee@example.test");
-  await page
-    .getByLabel(label("Phone number", "Nomor telepon"), { exact: true })
-    .fill("+628123456789");
-  await page
-    .getByRole("button", { name: label("Save", "Simpan"), exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Registered employee", exact: true }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", {
-      name: label("Account requests", "Permintaan akun"),
-      exact: true,
-    })
-    .click();
-  await page
-    .getByRole("button", {
-      name: label("Review request", "Tinjau permintaan"),
-      exact: true,
-    })
-    .click();
-  await expect(page.getByLabel("Email", { exact: true })).toHaveValue(
-    "applicant@example.test",
+  ).toHaveValue(
+    "Only this edited and reviewed report reaches the investigation team.",
   );
   await page
-    .getByLabel(label("Name", "Nama"), { exact: true })
-    .fill("Corrected applicant");
-  await page
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  const submit = review.getByRole("button", {
+    name: label("Submit report", "Kirim laporan"),
+    exact: true,
+  });
+  await expect(submit).toBeDisabled();
+  await review
+    .getByLabel(
+      label(
+        "I reviewed this content and removed details that could identify me.",
+        "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
+      ),
+    )
+    .check();
+  await review
+    .getByRole("textbox", { name: label("Title", "Judul"), exact: true })
+    .fill("Corrected concern title");
+  await expect(submit).toBeDisabled();
+  await review
+    .getByLabel(
+      label(
+        "I reviewed this content and removed details that could identify me.",
+        "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
+      ),
+    )
+    .check();
+  await submit.click();
+  await expect(
+    page.getByRole("heading", { name: "WB-TEST-1234" }),
+  ).toBeVisible();
+  await expect(page.locator("dd.secret")).toHaveCount(2);
+  expect(f.submitted).toMatchObject({
+    intakeId: f.state.id,
+    intakeToken: code,
+    summary:
+      "Only this edited and reviewed report reaches the investigation team.",
+  });
+  expect(f.admissions).toEqual([]);
+  expect(await page.evaluate(() => Object.keys(sessionStorage))).toEqual([]);
+  expect(await page.evaluate(() => Object.keys(localStorage))).toEqual([
+    "wb_language",
+  ]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("ai-first-receipt.png"),
+    fullPage: true,
+  });
+});
+
+test("AI failure preserves conversation and allows manual reporting", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    label = (en: string, indo: string) => (id ? indo : en),
+    f = await fixture(page, id ? "id" : "en");
+  f.fail = true;
+  await page.goto("/report");
+  const assistant = await start(page, id);
+  await expect(assistant.getByRole("alert")).toBeVisible();
+  await expect(page.getByText(f.code, { exact: true })).toBeVisible();
+  await expect(page.getByRole("log")).toContainText("suspicious invoice");
+  f.fail = false;
+  await assistant
     .getByRole("button", {
-      name: label("Approve request", "Setujui permintaan"),
+      name: label("Retry AI", "Coba lagi AI"),
       exact: true,
     })
     .click();
-  await expect.poll(() => actions.length).toBe(2);
-  expect(actions[1]).toMatchObject({
-    decision: "approved",
-    employee: { name: "Corrected applicant" },
+  await expect(page.getByRole("log")).toContainText(id ? "Kapan" : "When");
+  expect(f.state.messages.filter((m) => m.role === "user")).toHaveLength(1);
+  await assistant
+    .getByRole("button", {
+      name: label("Use a form instead", "Gunakan formulir"),
+      exact: true,
+    })
+    .click();
+  const review = page.getByRole("form", {
+    name: label("Review report", "Tinjau laporan"),
+    exact: true,
   });
+  await expect(review).toBeVisible();
+  await review
+    .getByRole("textbox", { name: label("Title", "Judul"), exact: true })
+    .fill("Manual concern after failure");
+  await review
+    .getByRole("textbox", {
+      name: label("What happened?", "Apa yang terjadi?"),
+      exact: true,
+    })
+    .fill("This concern was completed manually without another AI response.");
+  await review
+    .getByLabel(
+      label(
+        "I reviewed this content and removed details that could identify me.",
+        "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
+      ),
+    )
+    .check();
+  await review
+    .getByRole("button", {
+      name: label("Submit report", "Kirim laporan"),
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "WB-TEST-1234" }),
+  ).toBeVisible();
+});
+
+test("manual reporting works without AI consent or an email admission gate", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    label = (en: string, indo: string) => (id ? indo : en),
+    f = await fixture(page, id ? "id" : "en");
+  f.disabled = true;
+  await page.goto("/report");
+  await page
+    .getByRole("button", {
+      name: label("Use a form instead", "Gunakan formulir"),
+      exact: true,
+    })
+    .click();
+  const review = page.getByRole("form", {
+    name: label("Review report", "Tinjau laporan"),
+    exact: true,
+  });
+  await review
+    .getByRole("textbox", { name: label("Title", "Judul"), exact: true })
+    .fill("Anonymous manual concern");
+  await review
+    .getByRole("textbox", {
+      name: label("What happened?", "Apa yang terjadi?"),
+      exact: true,
+    })
+    .fill(
+      "This report is submitted without AI consent or contact information.",
+    );
+  await page
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  await review
+    .getByLabel(
+      label(
+        "I reviewed this content and removed details that could identify me.",
+        "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
+      ),
+    )
+    .check();
+  await review
+    .getByRole("button", {
+      name: label("Submit report", "Kirim laporan"),
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "WB-TEST-1234" }),
+  ).toBeVisible();
+  expect(f.bodies).toEqual([]);
+  expect(f.admissions).toEqual([]);
+  expect(f.submitted.aiConsent).toBe(false);
+  expect(f.submitted.intakeId).toBeUndefined();
+});
+
+test("expired continuation codes show a localized error", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    label = (en: string, indo: string) => (id ? indo : en),
+    f = await fixture(page, id ? "id" : "en");
+  f.expired = true;
+  await page.goto("/report#continue");
+  await page
+    .getByLabel(label("Continuation code", "Kode untuk melanjutkan"), {
+      exact: true,
+    })
+    .fill("x".repeat(43));
+  await page
+    .getByRole("button", {
+      name: label("Continue conversation", "Lanjutkan percakapan"),
+      exact: true,
+    })
+    .click();
+  await expect(page.locator("main").getByRole("alert")).toContainText(
+    id ? "kedaluwarsa" : "expired",
+  );
 });

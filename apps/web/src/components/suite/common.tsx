@@ -227,8 +227,8 @@ export const strings = {
   ],
   ai: ["Use optional assisted intake", "Gunakan panduan AI opsional"],
   aiConsent: [
-    "I consent to MiniMax processing my submitted report and private follow-up conversation. I will review updates before sharing them with investigators.",
-    "Saya menyetujui MiniMax memproses laporan terkirim dan percakapan tindak lanjut pribadi saya. Saya akan meninjau pembaruan sebelum membagikannya kepada penyelidik.",
+    "I consent to MiniMax processing my private intake conversation, submitted report and private follow-up conversation. I will review updates before sharing them with investigators.",
+    "Saya menyetujui MiniMax memproses percakapan awal pribadi, laporan terkirim dan percakapan tindak lanjut pribadi saya. Saya akan meninjau pembaruan sebelum membagikannya kepada penyelidik.",
   ],
   draft: ["Create an editable draft", "Buat draf yang dapat diedit"],
   withdraw: [
@@ -699,6 +699,22 @@ const errors: Record<string, [string, string]> = {
     "This verification already started an AI conversation. Continue with your report form.",
     "Verifikasi ini sudah memulai percakapan AI. Lanjutkan dengan formulir laporan.",
   ],
+  invalid_intake: [
+    "This continuation code is invalid or no longer available.",
+    "Kode percakapan ini tidak valid atau tidak tersedia lagi.",
+  ],
+  intake_expired: [
+    "This conversation expired 24 hours after it started. Start a new report.",
+    "Percakapan ini kedaluwarsa 24 jam setelah dimulai. Buat laporan baru.",
+  ],
+  intake_submitted: [
+    "This conversation was submitted. Use your report number and secrets in the case portal.",
+    "Percakapan ini telah dikirim. Gunakan nomor laporan dan rahasia Anda di portal laporan.",
+  ],
+  retry_required: [
+    "Retry the saved operation before sending another message.",
+    "Coba lagi operasi tersimpan sebelum mengirim pesan lain.",
+  ],
   ai_unavailable: [
     "The assistant is unavailable. Your message is saved. Use Retry to continue.",
     "Asisten tidak tersedia. Pesan Anda tersimpan. Gunakan Coba lagi untuk melanjutkan.",
@@ -1004,7 +1020,9 @@ export function Receipt({
                 )}
               </p>
               <ErrorBox error={otpError} />
-              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+              <div
+                style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}
+              >
                 <Field
                   label={t("verify")}
                   inputMode="numeric"

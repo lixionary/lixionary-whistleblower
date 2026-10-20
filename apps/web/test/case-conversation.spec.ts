@@ -197,18 +197,12 @@ test("form, saved credentials, private AI, reviewed update and resumed history",
     label = (en: string, indo: string) => (id ? indo : en),
     f = await fixture(page, id);
   await page.goto("/report");
-  const gate = page.getByRole("dialog");
-  await gate.getByLabel("Email", { exact: true }).fill("employee@example.test");
-  await gate
-    .getByRole("button", { name: label("Continue", "Lanjutkan"), exact: true })
+  await page
+    .getByRole("button", {
+      name: label("Use a form instead", "Gunakan formulir"),
+      exact: true,
+    })
     .click();
-  await gate
-    .getByLabel(label("Verification code", "Kode verifikasi"))
-    .fill("123456");
-  await gate
-    .getByRole("button", { name: label("Verify", "Verifikasi"), exact: true })
-    .click();
-  await expect(gate).not.toBeVisible();
   await page
     .getByLabel(
       label(

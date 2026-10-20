@@ -70,6 +70,12 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
     )
       throw new HttpError(429, "Limit", "rate_limit");
     const v = suiteReportSchema.parse(req.body);
+    if (Boolean(v.intakeId) !== Boolean(v.intakeToken))
+      throw new HttpError(
+        400,
+        "Intake credentials required",
+        "validation_error",
+      );
     if (v.hp) {
       return reply.status(201).send({
         caseCode: "WB-" + generateCrockford(4, 4),
@@ -93,83 +99,130 @@ export const reporterRoutes: FastifyPluginAsync = async (app) => {
     const pin = retry?.pin ?? generateCrockford(2, 4),
       recoveryCode = retry?.recoveryCode ?? generateCrockford(4, 4);
     let challengeId: string | undefined;
-    const row = await db.transaction(async (tx) => {
-      if (submissionHash) {
-        const [erased] = await rows(
-          tx,
-          sql`select case_id from deletion_manifest where case_id=${id}`,
-        );
-        if (erased)
-          throw new HttpError(410, "Submission expired", "submission_expired");
-        await rows(
-          tx,
-          sql`select pg_advisory_xact_lock(hashtextextended(${submissionHash},0))`,
-        );
-        const [existing] = await rows<
-          CaseRow & { pin_hash: string; recovery_hash: string }
-        >(tx, sql`select * from cases where submission_hash=${submissionHash}`);
-        if (existing) {
-          if (
-            !(await checkNormalizedSecret(existing.pin_hash, pin)) ||
-            !(await checkNormalizedSecret(existing.recovery_hash, recoveryCode))
-          )
+    let row: CaseRow;
+    try {
+      row = await db.transaction(async (tx) => {
+        // Serialize submissions across browsers using the same private intake.
+        // This lock also makes rollback reconciliation at the privacy boundary safe.
+        if (v.intakeId)
+          await rows(
+            tx,
+            sql`select pg_advisory_xact_lock(hashtextextended(${"intake-submit:" + v.intakeId},0))`,
+          );
+        if (submissionHash) {
+          const [erased] = await rows(
+            tx,
+            sql`select case_id from deletion_manifest where case_id=${id}`,
+          );
+          if (erased)
             throw new HttpError(
-              409,
-              "Retry credentials changed",
-              "submission_conflict",
+              410,
+              "Submission expired",
+              "submission_expired",
             );
-          const reserveRes = (await (
-            await privacyCall(req, "admission/reserve", {
-              reportToken: req.headers["x-report-access"]
-                ? String(req.headers["x-report-access"])
-                : undefined,
-              submissionHash: submissionHash!,
-              caseId: id,
-              reporterEmail: v.reporterEmail,
-            })
-          ).json()) as { challengeId?: string };
-          challengeId = reserveRes.challengeId;
-          return existing;
+          await rows(
+            tx,
+            sql`select pg_advisory_xact_lock(hashtextextended(${submissionHash},0))`,
+          );
+          const [existing] = await rows<
+            CaseRow & { pin_hash: string; recovery_hash: string }
+          >(
+            tx,
+            sql`select * from cases where submission_hash=${submissionHash}`,
+          );
+          if (existing) {
+            if (
+              !(await checkNormalizedSecret(existing.pin_hash, pin)) ||
+              !(await checkNormalizedSecret(
+                existing.recovery_hash,
+                recoveryCode,
+              ))
+            )
+              throw new HttpError(
+                409,
+                "Retry credentials changed",
+                "submission_conflict",
+              );
+            const reserveRes = (await (
+              await privacyCall(req, "admission/reserve", {
+                reportToken: req.headers["x-report-access"]
+                  ? String(req.headers["x-report-access"])
+                  : undefined,
+                submissionHash: submissionHash!,
+                caseId: id,
+                reporterEmail: v.reporterEmail,
+                ...(v.intakeId
+                  ? {
+                      intakeId: v.intakeId,
+                      intakeToken: v.intakeToken,
+                      policyVersion: v.policyVersion,
+                    }
+                  : {}),
+              })
+            ).json()) as { challengeId?: string };
+            challengeId = reserveRes.challengeId;
+            return existing;
+          }
         }
-      }
-      if (v.policyVersion !== s.version)
-        throw new HttpError(409, "Review current policy", "policy_changed");
-      if (
-        !s.body.categories.some((c) => c.key === v.category) ||
-        (v.businessUnit && !s.body.businessUnits.includes(v.businessUnit))
-      )
-        throw new HttpError(
-          400,
-          "Invalid category or unit",
-          "validation_error",
+        if (v.policyVersion !== s.version)
+          throw new HttpError(409, "Review current policy", "policy_changed");
+        if (
+          !s.body.categories.some((c) => c.key === v.category) ||
+          (v.businessUnit && !s.body.businessUnits.includes(v.businessUnit))
+        )
+          throw new HttpError(
+            400,
+            "Invalid category or unit",
+            "validation_error",
+          );
+        const reserveRes = (await (
+          await privacyCall(req, "admission/reserve", {
+            reportToken: req.headers["x-report-access"]
+              ? String(req.headers["x-report-access"])
+              : undefined,
+            submissionHash: submissionHash!,
+            caseId: id,
+            aiConsent: v.aiConsent,
+            policyVersion: v.policyVersion,
+            locale: v.locale,
+            reporterEmail: v.reporterEmail,
+            ...(v.intakeId
+              ? { intakeId: v.intakeId, intakeToken: v.intakeToken }
+              : {}),
+          })
+        ).json()) as { challengeId?: string };
+        challengeId = reserveRes.challengeId;
+        const [r] = await rows<CaseRow>(
+          tx,
+          sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(normalizeSecret(pin))},${await hashSecret(normalizeSecret(recoveryCode))},${submissionHash},${seal({ ...v, hp: undefined, reporterEmail: undefined, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
         );
-      const reserveRes = (await (
-        await privacyCall(req, "admission/reserve", {
-          reportToken: req.headers["x-report-access"]
-            ? String(req.headers["x-report-access"])
-            : undefined,
-          submissionHash: submissionHash!,
-          caseId: id,
-          aiConsent: v.aiConsent,
-          policyVersion: v.policyVersion,
-          locale: v.locale,
-          reporterEmail: v.reporterEmail,
-          ...(v.intakeId
-            ? { intakeId: v.intakeId, intakeToken: v.intakeToken }
-            : {}),
-        })
-      ).json()) as { challengeId?: string };
-      challengeId = reserveRes.challengeId;
-      const [r] = await rows<CaseRow>(
-        tx,
-        sql`insert into cases(id,case_code,pin_hash,recovery_hash,submission_hash,content_enc,category,sensitive,team_id) values(${id},${code()},${await hashSecret(normalizeSecret(pin))},${await hashSecret(normalizeSecret(recoveryCode))},${submissionHash},${seal({ ...v, hp: undefined, reporterEmail: undefined, aiConsent: undefined, intakeId: undefined, intakeToken: undefined }, config.keys, "case:" + id)},${v.category},${v.sensitive},${v.sensitive ? s.body.restrictedTeamId : s.body.defaultTeamId}) returning *`,
-      );
-      await audit(tx, "reporter", "report_submitted", id, {
-        policyVersion: s.version,
+        await audit(tx, "reporter", "report_submitted", id, {
+          policyVersion: s.version,
+        });
+        await enqueue(tx, "staff_alert", id, { event: "received" });
+        return r!;
       });
-      await enqueue(tx, "staff_alert", id, { event: "received" });
-      return r!;
-    });
+    } catch (error) {
+      if (v.intakeId) {
+        // Reacquire the same lock before releasing: another browser may already
+        // be retrying. The signed boundary also checks for a committed case.
+        await db
+          .transaction(async (tx) => {
+            await rows(
+              tx,
+              sql`select pg_advisory_xact_lock(hashtextextended(${"intake-submit:" + v.intakeId},0))`,
+            );
+            await privacyCall(req, "intake/release", {
+              intakeId: v.intakeId,
+              intakeToken: v.intakeToken,
+              caseId: id,
+              submissionHash,
+            });
+          })
+          .catch(() => {}); // Preserve the original failure; reservation retries remain safe.
+      }
+      throw error;
+    }
     const sid = await createReporterSession(req, reply, row);
     return reply.status(201).send({
       caseCode: row.case_code,

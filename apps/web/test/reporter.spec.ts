@@ -11,53 +11,13 @@ test("anonymous reporting, secret receipt, private conversation and recovery", a
     .getByRole("link", { name: id ? "Buat laporan" : "Create a report" })
     .first()
     .click();
-  const employeeEmail = `e2e-reporter-${info.project.name}@example.test`;
-  const gate = page.getByRole("dialog");
-  await expect(gate).toBeVisible();
-  await gate.getByLabel("Email", { exact: true }).fill(employeeEmail);
-  const previousMail = await (
-    await page.request.get("http://localhost:6403/api/v1/messages")
-  ).json();
-  const previousMailIds = new Set(
-    previousMail.messages?.map((m: { ID: string }) => m.ID),
-  );
-  await gate
-    .getByRole("button", { name: id ? "Lanjutkan" : "Continue", exact: true })
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page
+    .getByRole("button", {
+      name: id ? "Gunakan formulir" : "Use a form instead",
+      exact: true,
+    })
     .click();
-  let gateCode = "";
-  await expect
-    .poll(
-      async () => {
-        const box = await (
-          await page.request.get("http://localhost:6403/api/v1/messages")
-        ).json();
-        const match = box.messages?.find(
-          (m: { ID: string; To: { Address: string }[] }) =>
-            !previousMailIds.has(m.ID) &&
-            m.To.some((to) => to.Address === employeeEmail),
-        );
-        if (!match) return false;
-        const message = await (
-          await page.request.get(
-            "http://localhost:6403/api/v1/message/" + match.ID,
-          )
-        ).json();
-        gateCode =
-          message.Text?.match(
-            /(?:code is|verifikasi Anda adalah) (\d{6})/,
-          )?.[1] ?? "";
-        return !!gateCode;
-      },
-      { timeout: 30000 },
-    )
-    .toBe(true);
-  await gate
-    .getByLabel(id ? "Kode verifikasi" : "Verification code")
-    .fill(gateCode);
-  await gate
-    .getByRole("button", { name: id ? "Verifikasi" : "Verify", exact: true })
-    .click();
-  await expect(gate).not.toBeVisible();
   await expect(
     page.getByRole("heading", {
       name: id ? "Buat laporan" : "Create a report",
