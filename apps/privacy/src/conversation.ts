@@ -51,12 +51,11 @@ export async function conversationRoutes(app: FastifyInstance) {
       ? unseal<State>(String(r.state_enc), config.keys, "conversation:" + r.id)
       : {
           ...empty(),
-          initialized:
-            unseal<ChatMessage[]>(
-              String(r.transcript_enc),
-              config.keys,
-              "intake:" + r.id,
-            ).length > 0,
+          initialized: unseal<ChatMessage[]>(
+            String(r.transcript_enc),
+            config.keys,
+            "intake:" + r.id,
+          ).some((m) => m.role === "user"),
         };
   async function lock(tx: Tx, caseId: string) {
     const [l] = await rows(
@@ -71,7 +70,7 @@ export async function conversationRoutes(app: FastifyInstance) {
         tx,
         sql`select * from intakes where case_id=${req.cap!.sub} for share`,
       );
-      const active = !!r && !r.revoked_at;
+      const active = !!r && !r.revoked_at && r.ai_consented !== false;
       const state = active ? decodeState(r) : empty();
       const [pending] = active
         ? await rows(
@@ -145,11 +144,11 @@ export async function conversationRoutes(app: FastifyInstance) {
           } else {
             [r] = await rows(
               tx,
-              sql`update intakes set revoked_at=null,consent_version=${v.policyVersion},consented_at=now() where id=${r.id} returning *`,
+              sql`update intakes set revoked_at=null,ai_consented=true,consent_version=${v.policyVersion},consented_at=now() where id=${r.id} returning *`,
             );
           }
         }
-        if (!r || r.revoked_at)
+        if (!r || r.revoked_at || r.ai_consented === false)
           throw new PrivacyError(409, "ai_consent_required");
         if (Number(r.consent_version) !== req.caseInfo!.policyVersion)
           throw new PrivacyError(409, "policy_changed");

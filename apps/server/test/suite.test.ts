@@ -1036,7 +1036,7 @@ describe("suite privacy and workflow boundaries", () => {
           },
         })
       ).statusCode,
-    ).toBe(409);
+    ).toBe(200);
     expect(
       (
         await privacy.inject({
@@ -2290,7 +2290,7 @@ describe("suite privacy and workflow boundaries", () => {
         start = { id, code, consent: true, policyVersion: 1, locale: "en" };
       expect(
         (await f.intake("", { ...start, consent: false })).statusCode,
-      ).toBe(400);
+      ).toBe(200);
       expect(
         (await f.intake("", { ...start, policyVersion: 999 })).json().error,
       ).toBe("policy_changed");

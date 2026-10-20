@@ -51,6 +51,25 @@ test("topology transition rejects unrelated services, database, network and volu
       );
     };
     assert.equal((await validate(after)).status, 0);
+    const withStorage = structuredClone(after);
+    withStorage.services.garage = {
+      image:
+        "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020",
+      networks: { "evidence-storage": {} },
+    };
+    withStorage.networks["evidence-storage"] = { internal: true };
+    withStorage.volumes["garage-data"] = {};
+    withStorage.volumes["garage-meta"] = {};
+    assert.equal((await validate(withStorage)).status, 0);
+    const externalStorage = structuredClone(withStorage);
+    externalStorage.networks["evidence-storage"].internal = false;
+    assert.notEqual((await validate(externalStorage)).status, 0);
+    const exposed = structuredClone(withStorage);
+    exposed.services.garage.ports = ["3900:3900"];
+    assert.notEqual((await validate(exposed)).status, 0);
+    const unpinned = structuredClone(withStorage);
+    unpinned.services.garage.image = "dxflrs/garage:latest";
+    assert.notEqual((await validate(unpinned)).status, 0);
     for (const mutate of [
       (c) => {
         c.services["case-db"].image = "postgres:99";

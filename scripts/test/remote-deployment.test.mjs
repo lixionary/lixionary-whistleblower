@@ -117,6 +117,7 @@ elif command=='docker':
    image=images[kind] if (root/'activated').exists() else 'sha256:'+'d'*64
    print(json.dumps([{'State':{'Running':True},'Image':image,'Config':{'Labels':{'com.docker.compose.project':'whistle-suite','com.docker.compose.service':service}}}]))
  elif args[0]=='run':
+  if '--entrypoint' in args and 'test' in args:sys.exit(1)
   mount=next(v for v in args if v.endswith(':/snapshot'))
   (Path(mount[:-10])/'vault.tar').write_bytes(b'synthetic sealed vault')
 `;

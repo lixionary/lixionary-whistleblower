@@ -26,13 +26,13 @@ Source: [company configuration and teams](../apps/server/src/routes/admin.ts), [
 
 1. Open `/report`. The private assistant immediately greets the reporter and asks what happened in the selected language (English or Indonesian).
 2. Read the policy and privacy notice inline and acknowledge them. Consent is required before sending any content to MiniMax. No report form or email-verification gate precedes the conversation.
-3. Send the first message. The privacy service creates an encrypted private intake and displays one secret **continuation code**. Save it: anyone holding it can access the unfinished conversation. It is not a report number.
+3. Send the first message or attach evidence. Uploading needs policy acknowledgment, but does not need AI consent. The privacy service creates an encrypted private intake and displays one secret **continuation code**. Save it: anyone holding it can access the unfinished conversation. It is not a report number.
 4. Continue answering focused questions. Changing the language selector changes subsequent replies and generated drafts; earlier messages stay in their original language. Unknown facts can remain unknown.
 5. Return using **Continue a conversation** on the home or report page and enter the code. Messages and saved review edits are restored across devices. The code expires exactly **24 hours after creation**, without extension, and expired unsubmitted conversations are deleted by cleanup.
 6. Choose **Review report** to generate an editable report. Review the title, summary, optional details, category, relationship, business unit, and independent sensitive-routing choice. Review edits are saved privately; a Save draft action is also available. Optional notification email is never sent to AI.
 7. Confirm the current policy and review the report for identifying information, then explicitly **Submit report**. Only this approved report enters the staff workspace. Conversation messages alone never create a case or alert staff.
 
-**Use a form instead** remains available when consent is declined, AI is disabled, the provider fails, or AI allowance runs out. Existing review edits or the latest generated draft are preserved; the reporter can complete the form without another AI request. Evidence upload remains a post-submission action in the case portal.
+**Use a form instead** remains available when consent is declined, AI is disabled, the provider fails, or AI allowance runs out. Existing review edits or the latest generated draft are preserved; the reporter can complete the form without another AI request. The same evidence controls remain available beside the manual form. Processing and unapproved evidence never block report submission.
 
 Continuation codes are held only in browser memory and stored as hashes in the privacy database. They do not appear in URLs, logs, or browser storage. Save or download the code before leaving the page. Optional contact verification is offered only after submission for notifications, never admission or email recovery.
 
@@ -42,7 +42,7 @@ The server checks current company policy, categories, and business units. A poli
 flowchart TD
     Start["Open reporting chat in selected language"] --> Greet["Assistant greeting and first question"]
     Greet --> Consent["Inline policy acknowledgment and AI consent"]
-    Consent --> Chat["First message creates private intake"]
+    Consent --> Chat["First message or upload creates private intake"]
     Chat --> Code["Save continuation code: expires 24 hours from creation"]
     Code --> Continue["Continue now or resume with code"]
     Continue --> Draft["Generate editable report"]
@@ -128,18 +128,20 @@ The reporter and authorized staff exchange messages inside the case portal. Repo
 
 ### Evidence
 
-After submission, the reporter can upload images, PDFs, or supported Office files in `/case`. The privacy service seals the original, creates a sanitized preview, and lets the reporter review every page and apply permanent redactions. Only the reviewed version explicitly approved by the reporter is published to the staff evidence workspace. Processing can fail; an uploaded file is not automatically shared evidence.
+Before the first message, beside the chat or manual form, and later in `/case`, the reporter can upload PNG/JPEG/WebP images, PDFs, DOCX, XLSX, or PPTX files. Limits are 20 MB per file, 20 files, and 200 MB per draft/case. Uploads do not require AI consent, and neither files, filenames, nor extracted content are sent to AI. The privacy service seals the original, creates a sanitized preview, and lets the reporter review every page and apply permanent redactions. Before submission, even approved evidence stays private. Once the case is committed, files move to case ownership and only explicitly approved sanitized versions are published to the staff evidence workspace. Unapproved or processing files remain private and can be reviewed later in the case portal. Discarded or expired unsubmitted drafts queue deletion of both original and derivative files; storage failures are retried. Processing can fail; an uploaded file is not automatically shared evidence.
 
 ```mermaid
 flowchart LR
-    Upload["Reporter uploads evidence in case portal"] --> Seal["Seal original in private storage"]
+    Upload["Reporter uploads evidence in chat, form, or case portal"] --> Seal["Seal original in private storage"]
     Seal --> Convert["Create sanitized preview"]
     Convert --> Review["Reporter reviews every page"]
     Review --> Redact{"More redaction needed?"}
     Redact -->|Yes| Apply["Apply redaction and refresh preview"]
     Apply --> Review
     Redact -->|No| Approve["Reporter explicitly approves reviewed version"]
-    Approve --> Publish["Publish approved derivative to case workspace"]
+    Approve --> Submitted{"Report submitted?"}
+    Submitted -->|No| Private["Keep approved version private"]
+    Submitted -->|Yes| Publish["Publish approved derivative to case workspace"]
     Publish --> Staff["Authorized managers and analysts inspect evidence"]
 ```
 

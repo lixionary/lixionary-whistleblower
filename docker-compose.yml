@@ -44,6 +44,12 @@ x-private-env: &private-env
   SERVICE_EVENT_KEY_FILE: /run/secrets/service_event_key
   PRIVACY_ABUSE_KEY_FILE: /run/secrets/privacy_abuse_key
   PRIVACY_STORAGE: /data/privacy
+  PRIVACY_EVIDENCE_BACKEND: ${PRIVACY_EVIDENCE_BACKEND:-s3}
+  PRIVACY_S3_ENDPOINT: http://garage:3900
+  PRIVACY_S3_REGION: garage
+  PRIVACY_S3_BUCKET: whistle-evidence
+  PRIVACY_S3_ACCESS_KEY_FILE: /run/secrets/storage_access_key
+  PRIVACY_S3_SECRET_KEY_FILE: /run/secrets/storage_secret_key
   CASE_ORIGIN: http://case-api:9550
   CONVERTER_ORIGIN: http://converter:6406
   PRIVACY_SMTP_HOST: ${PRIVACY_SMTP_HOST:-mailpit}
@@ -59,6 +65,25 @@ x-private-env: &private-env
   TWILIO_FROM: ${TWILIO_FROM:-}
   MINIMAX_API_KEY_FILE: /run/secrets/minimax_api_key
 services:
+  garage:
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    command: [/garage, server, --single-node]
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    # Read the owner's mode-0600 configuration bind on Linux.
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: [no-new-privileges:true]
+    secrets:
+      - source: garage_config
+        target: /etc/garage.toml
+    volumes: [garage-data:/data, garage-meta:/meta]
+    networks: [evidence-storage]
+    healthcheck:
+      test: [CMD, /garage, status]
+      interval: 5s
+      timeout: 5s
+      retries: 12
   case-db:
     image: postgres:17-alpine
     environment:
@@ -169,13 +194,17 @@ services:
         twilio_sid,
         twilio_token,
         minimax_api_key,
+        storage_access_key,
+        storage_secret_key,
       ]
     volumes: [suite-vault:/data/privacy]
-    networks: [private-db, services, edge, conversion, delivery]
+    networks:
+      [private-db, services, edge, conversion, delivery, evidence-storage]
     depends_on:
       {
         private-migrate: { condition: service_completed_successfully },
         converter: { condition: service_healthy },
+        garage: { condition: service_healthy },
       }
     healthcheck:
       {
@@ -258,7 +287,11 @@ networks:
   edge: {}
   conversion: { internal: true }
   delivery: {}
+  evidence-storage:
+    internal: true
 volumes:
+  garage-data: {}
+  garage-meta: {}
   suite-case-db: {}
   suite-private-db: {}
   suite-vault: {}
@@ -302,3 +335,10 @@ secrets:
   twilio_token: { file: "${SUITE_CONFIG_DIR:-.suite-dev}/secrets/twilio_token" }
   minimax_api_key:
     { file: "${SUITE_CONFIG_DIR:-.suite-dev}/secrets/minimax_api_key" }
+
+  garage_config:
+    { file: "${SUITE_CONFIG_DIR:-.suite-dev}/secrets/garage_config" }
+  storage_access_key:
+    { file: "${SUITE_CONFIG_DIR:-.suite-dev}/secrets/storage_access_key" }
+  storage_secret_key:
+    { file: "${SUITE_CONFIG_DIR:-.suite-dev}/secrets/storage_secret_key" }

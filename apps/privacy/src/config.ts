@@ -12,6 +12,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     !env.PUBLIC_WEB_URL?.startsWith("https://")
   )
     throw new Error("Production requires PUBLIC_WEB_URL with HTTPS");
+  const evidenceBackend = env.PRIVACY_EVIDENCE_BACKEND ?? "filesystem";
+  if (!["filesystem", "s3"].includes(evidenceBackend))
+    throw new Error("Invalid evidence backend");
+  const s3 = {
+    endpoint: env.PRIVACY_S3_ENDPOINT ?? "http://garage:3900",
+    region: env.PRIVACY_S3_REGION ?? "garage",
+    bucket: env.PRIVACY_S3_BUCKET ?? "whistle-evidence",
+    accessKey: get("PRIVACY_S3_ACCESS_KEY", env, evidenceBackend === "s3"),
+    secretKey: get("PRIVACY_S3_SECRET_KEY", env, evidenceBackend === "s3"),
+  };
   return {
     env: env.NODE_ENV ?? "development",
     production: env.NODE_ENV === "production",
@@ -24,6 +34,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env) {
     publicKey: get("CAPABILITY_PUBLIC_KEY", env),
     eventKey: get("SERVICE_EVENT_KEY", env),
     abuseKey: get("PRIVACY_ABUSE_KEY", env),
+    evidenceBackend: evidenceBackend as "filesystem" | "s3",
+    s3,
     storage: env.PRIVACY_STORAGE ?? "./data/privacy",
     trustProxy:
       env.TRUST_PROXY === "1"

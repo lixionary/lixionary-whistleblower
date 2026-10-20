@@ -2,7 +2,7 @@
 
 ## Production installation
 
-Use a dedicated Docker VPS with Node 24+, Docker Compose, native restic, SSH, encrypted disks, and at least 4 GB available RAM for the application and document conversion; monitor actual usage on shared hosts. Open only ports 80/443 publicly; keep PostgreSQL, converter and service internals private. Do not enable request-body, cookie, query-string or destination logging in a CDN, host proxy, APM or provider integration.
+Use a dedicated Docker VPS with Node 24+, Docker Compose, native restic, SSH, encrypted disks, and at least 4 GB available RAM for the application and document conversion; monitor actual usage on shared hosts. Open only ports 80/443 publicly; keep PostgreSQL, Garage, converter and service internals private. Do not enable request-body, cookie, query-string or destination logging in a CDN, host proxy, APM or provider integration.
 
 The backend listens on 9550 and the frontend on 9551. Compose publishes these ports, and the case database on 9552, exclusively on `127.0.0.1`; PostgreSQL continues to listen on 5432 inside its isolated network. The private identity database has no host mapping. System nginx terminates public HTTPS on 443; Certbot manages certificate renewal. Use an SSH tunnel when accessing the backend or database remotely. Restore drills automatically include `deploy/compose.restore.yml` to remove published ports; keep that override included when operating a restored project. This requires Docker Compose 2.24.4 or later.
 
@@ -19,6 +19,8 @@ The backend listens on 9550 and the frontend on 9551. Compose publishes these po
 5. Build and launch:
 
    ```sh
+   export SUITE_CONFIG_DIR="$PWD/.suite-config"
+   bash scripts/setup-storage.sh --env-file .suite-config/suite.env
    docker compose --env-file .suite-config/suite.env up --build -d
    ```
 
@@ -31,9 +33,9 @@ The backend listens on 9550 and the frontend on 9551. Compose publishes these po
      node dist/cli/bootstrap.js admin@example.com
    ```
 
-   Bootstrap refuses a non-empty staff table. Enroll MFA and save recovery codes. Use **Administration → Users → Create user** (`/staff/admin/users/new`) to invite and onboard four managers: two standard, two independent. Add analysts to their teams. Edit account name, role and active status from the Users table; account emails are read-only. Active accounts have a separate **Send password reset email** action on their edit page. The recipient chooses the new password through a one-time 30-minute link; MFA remains required. Configure both independent teams, bilingual policy/notice, categories, acknowledgment/follow-up deadlines and all six retention periods. Production intake rejects submissions while company setup is incomplete. Add employee name, email and international phone records at `/staff/admin/employees` before opening reporting. Reporters with unknown or inactive emails are rejected; the create-report flow does not offer access requests. Registered, active emails must pass OTP verification before filling the report form. Employee records grant reporting eligibility only; staff roles remain separate.
+   Bootstrap refuses a non-empty staff table. Enroll MFA and save recovery codes. Use **Administration → Users → Create user** (`/staff/admin/users/new`) to invite and onboard four managers: two standard, two independent. Add analysts to their teams. Edit account name, role and active status from the Users table; account emails are read-only. Active accounts have a separate **Send password reset email** action on their edit page. The recipient chooses the new password through a one-time 30-minute link; MFA remains required. Configure both independent teams, bilingual policy/notice, categories, acknowledgment/follow-up deadlines and all six retention periods. Production intake rejects submissions while company setup is incomplete. Reporters need no employee-directory lookup or pre-submission email verification. Optional email verification after submission activates notifications only.
 
-7. Add a synthetic employee and check unknown/inactive email rejection and real admission email delivery before creating synthetic reports. Phone admission is disabled. Check optional case contact delivery, including expired/wrong/reused codes, provider outage/retry, notification opt-out, and generic message content. Use a synthetic conversation for optional AI verification. Confirm nobody can obtain contacts, masked hints, raw transcripts or original attachments through staff/admin routes.
+7. Create synthetic anonymous reports through chat and the manual form. Check pre-message evidence upload, continuation/resume, review and approval, post-submission publication, and optional case contact delivery, including expired/wrong/reused codes, provider outage/retry, notification opt-out, and generic message content. Use a synthetic conversation for optional AI verification. Confirm nobody can obtain contacts, masked hints, raw transcripts or original attachments through staff/admin routes.
 8. Configure offsite backup, monitoring and scheduled restore drills before opening the public channel.
 
 Build/test/scan exact release images in CI, record their digests with the revision, and deploy those digests in a production override. The supplied `:local` image tags are a local-build default, not an immutable release identity. Do not automatically overwrite production from every branch push. Before upgrading, take a verified offsite backup; apply migrations once through the separate migrate services, then recreate runtime services. Migrations are forward-only; roll back a release by restoring into a separate project, not by running older binaries against an incompatible schema.
@@ -107,7 +109,7 @@ The script validates types, tests, snapshot authentication, production builds an
 
 The frontend compiler runs on the builder's native architecture. Its runtime dependencies are installed separately for the destination architecture before producing the AMD64 image, avoiding Next compiler crashes under ARM-to-x86 emulation while retaining the correct native image libraries. This uses Docker's [build and target platform separation](https://docs.docker.com/build/building/multi-platform/#cross-compilation).
 
-A VPS lock covers snapshotting, migration and activation. The script stops application writers briefly, snapshots both PostgreSQL databases, the sealed vault, production keys/configuration, the prior image IDs and the current audit checkpoint, then encrypts the tar stream with AES-256-GCM. It copies the encrypted archive and separate key into `.suite-dev/deployments/<release-id>/` and verifies the authentication tag locally before acknowledging that migrations may proceed. Raw snapshot staging files are removed on the VPS. The same protected encrypted backup remains in `.suite-config/releases/<release-id>/`, alongside deployment logs and the image manifest. Protect both machines and keep the archive and key together. This release safety copy does not replace scheduled offsite restic backups, legal-hold retention or restore drills.
+A VPS lock covers snapshotting, migration and activation. The script stops application writers briefly, snapshots both PostgreSQL databases, the sealed filesystem vault, verified exports of S3 sealed objects with a checksum manifest, production keys/configuration, the prior image IDs and the current audit checkpoint, then encrypts the tar stream with AES-256-GCM. It copies the encrypted archive and separate key into `.suite-dev/deployments/<release-id>/` and verifies the authentication tag locally before acknowledging that migrations may proceed. Raw snapshot staging files are removed on the VPS. The same protected encrypted backup remains in `.suite-config/releases/<release-id>/`, alongside deployment logs and the image manifest. Protect both machines and keep the archive and key together. This release safety copy does not replace scheduled offsite restic backups, legal-hold retention or restore drills.
 
 The portal is unavailable while the snapshot is created/copied and migrations run; allow a maintenance window based on data size and connection speed. Snapshots are limited to 60 GiB of plaintext per release. Allow disk space for the uploaded images, plaintext staging and encrypted snapshot in addition to the 8 GiB preflight minimum.
 
@@ -131,7 +133,7 @@ python3 scripts/deployment-backup.py decrypt \
   .suite-dev/deployments/<release-id>/recovery.key /protected/recovery.tar
 ```
 
-Use the tar's dumps, sealed vault, configuration and prior revision to restore into a new isolated project following the restore section. Apply the newest verified deletion/hold manifest and revoke old sessions before public access. Do not replace a live database or automatically rewind migrations. Plaintext recovery tars contain private keys/configuration and must be removed securely after recovery. Release snapshots require the same retention and legal-hold review as other backups; the script does not delete snapshots automatically.
+Use the tar's dumps, sealed vault, sealed S3 object export/manifest, configuration and prior revision to restore into a new isolated project following the restore section. Apply the newest verified deletion/hold manifest and revoke old sessions before public access. Do not replace a live database or automatically rewind migrations. Plaintext recovery tars contain private keys/configuration and must be removed securely after recovery. Release snapshots require the same retention and legal-hold review as other backups; the script does not delete snapshots automatically.
 
 ## Zoho transactional email
 
@@ -197,6 +199,32 @@ Production settings require positive retention days for cases, contacts, transcr
 
 Case deletion creates a durable deletion manifest before removing the case and queues private erasure; operations expose incomplete erasures. Original and derivative files remain encrypted until deletion. Audit pruning is owner-only, bounded to an eligible prefix before any held event, and permitted only after a matching offsite checkpoint. Policy history and minimal deletion identifiers remain for accountability/restoration. Storage media secure erasure and backup lifetimes remain host/provider responsibilities.
 
+## Evidence storage and migration
+
+Compose defaults new evidence to the pinned Garage service on the private `evidence-storage` network. No S3, RPC, or admin port is published; the admin listener is loopback-only inside Garage. `pnpm storage:setup` (or `scripts/setup-storage.sh` with production Compose flags) creates the private `whistle-evidence` bucket and imports an application key with read/write permissions only. Setup preserves existing credentials. The privacy API receives only the application key; staff, web, case API, and converter receive no storage credentials. Garage's owner-only configuration includes its RPC/admin secrets and requires `DAC_READ_SEARCH` to read the Linux secret bind.
+
+Both originals and derivatives are application-encrypted before the filesystem or S3 adapter writes them. The database records each file's backend; no public URLs or browser-direct uploads are used. Direct-service deployments can set `PRIVACY_EVIDENCE_BACKEND=filesystem` or `s3`, with `PRIVACY_S3_ENDPOINT`, `PRIVACY_S3_REGION`, `PRIVACY_S3_BUCKET` and protected `PRIVACY_S3_ACCESS_KEY_FILE` / `PRIVACY_S3_SECRET_KEY_FILE`. An unavailable S3 backend returns a retryable storage error rather than switching storage silently. Text reporting remains available.
+
+This initial Garage topology has one node and one replica. It depends on host availability and verified offsite backups, and does not provide high availability. Monitor both Garage volumes, storage failures, and queued `evidence_deletions`. Workers retry deletion of originals and derivatives after expiry, discard, retention, or case erasure, including retained legacy copies. Unsubmitted drafts expire 24 hours after creation; active conversion leases delay physical cleanup safely.
+
+Apply the privacy migration before starting updated services. To move legacy files, first take a verified backup, initialize Garage, and stop web/APIs/workers to quiesce writers. Use the same Compose project/environment/production overrides as the active release for each command below:
+
+```sh
+# Include the active release and VPS override when operating production.
+docker compose --env-file .suite-dev/suite.env stop web case-api privacy-api
+docker compose --env-file .suite-dev/suite.env run -T --rm --no-deps \
+  --entrypoint node privacy-api dist/cli/evidence-storage.js migrate
+```
+
+Migration copies sealed originals and any derivative, checks plaintext hashes against the database and copied sealed checksums, then changes the recorded backend. It is idempotent and leaves filesystem copies intact. A failed file remains on its prior backend. Keep writers stopped until migration finishes. Restart the suite, take and verify a new backup and isolated restore, and then quiesce writers again before optional cleanup:
+
+```sh
+docker compose --env-file .suite-dev/suite.env run -T --rm --no-deps \
+  --entrypoint node privacy-api dist/cli/evidence-storage.js purge-filesystem
+```
+
+Purge verifies the authoritative S3 data against database hashes before removing retained local copies. Keep the old keyring for old backups. The normal rekey command handles both recorded backends; stale filesystem migration copies are removed by verified purge or eventual deletion. Never delete Garage volumes or change the backend column manually as a migration shortcut.
+
 ## Offsite encrypted backup
 
 Provision a dedicated SFTP account/directory on a separate host, pin its host key in SSH configuration, restrict the account and SSH key, and configure independent oversight of the backup/checkpoint store. Keep the recovery password and a protected key/config backup outside the application host. A backup containing data without its original keyrings is unusable.
@@ -210,7 +238,7 @@ restic init  # first installation only
 bash scripts/backup-suite.sh
 ```
 
-Schedule the script with the same environment and working directory, prevent overlapping executions, and alert on failure and backup age. It stops web/APIs/workers briefly, verifies and checkpoints the audit chain, dumps both databases, archives the encrypted vault and protected configuration, restarts services, encrypts the snapshot offsite, runs `restic check`, writes the latest verified checkpoint, applies routine backup retention, and then prunes eligible audit prefixes. Backups are consistent application snapshots, not zero-downtime physical database backups.
+Schedule the script with the same environment and working directory, prevent overlapping executions, and alert on failure and backup age. It stops web/APIs/workers briefly, verifies and checkpoints the audit chain, dumps both databases, archives the encrypted filesystem vault, exports the sealed S3 objects with a checksum manifest, and archives protected configuration, restarts services, encrypts the snapshot offsite, runs `restic check`, writes the latest verified checkpoint, applies routine backup retention, and then prunes eligible audit prefixes. Backups are consistent application snapshots, not zero-downtime physical database backups.
 
 Snapshots containing held cases get a `held` tag and are excluded from automated routine pruning. Release those snapshots only after an authorized hold review confirms no contained case remains held and the backup retention obligation is met. Never blindly prune all snapshots by age. Restic passwords/SSH private keys and offsite permissions must not be exposed to application administrators.
 
@@ -226,7 +254,7 @@ export RESTORE_PROJECT=whistle-suite-restore-drill
 bash scripts/restore-suite.sh
 ```
 
-The script verifies the encrypted snapshot, restores both databases and sealed vault into new volumes, reapplies runtime permissions/migrations, replays case deletions and holds, revokes all sessions and staff reset/invitation tokens, discards old OTP/notification deliveries, and verifies the audit chain. It leaves APIs/workers/web stopped. It reports a protected staging directory; after verification, securely remove that directory using the host's approved procedure. Add any alternate production config directory to Git/Docker ignore rules before local builds.
+The script verifies the encrypted snapshot, restores both databases and the sealed filesystem vault into new volumes, initializes private Garage, verifies and imports any sealed S3 object export, reapplies runtime permissions/migrations, replays case deletions and holds, revokes all sessions and staff reset/invitation tokens, discards old OTP/notification deliveries, and verifies the audit chain. Older filesystem-only snapshots remain supported: missing storage configuration is generated, old files keep their filesystem backend, and Garage is initialized for future uploads. It leaves APIs/workers/web stopped. It reports a protected staging directory; after verification, securely remove that directory using the host's approved procedure. Add any alternate production config directory to Git/Docker ignore rules before local builds.
 
 Before starting restored services, set a separate test hostname, closed ingress and test-only delivery transports. Start only APIs and workers on restricted ingress, drain pending `privacy_delete` jobs, confirm deletion manifests are complete, verify readable authorized cases and sanitized evidence, verify held originals remain sealed, and ensure old cookies/PIN rotations behave as expected. Open the web/proxy only after operator review. Restore checks do not permit sending historical notifications to real reporters. Record backup/restore times, revision, snapshot ID, checkpoint tip, and non-sensitive verification evidence. Repeat the drill regularly and after migration/key changes.
 

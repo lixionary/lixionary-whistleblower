@@ -715,6 +715,14 @@ const errors: Record<string, [string, string]> = {
     "Retry the saved operation before sending another message.",
     "Coba lagi operasi tersimpan sebelum mengirim pesan lain.",
   ],
+  storage_unavailable: [
+    "Evidence storage is temporarily unavailable. Your report text is kept; you can continue without uploading.",
+    "Penyimpanan bukti sementara tidak tersedia. Teks laporan tetap tersimpan; Anda dapat melanjutkan tanpa mengunggah.",
+  ],
+  unsupported_type: [
+    "Choose a PNG, JPEG, WebP, PDF, Word, Excel or PowerPoint file.",
+    "Pilih file PNG, JPEG, WebP, PDF, Word, Excel, atau PowerPoint.",
+  ],
   ai_unavailable: [
     "The assistant is unavailable. Your message is saved. Use Retry to continue.",
     "Asisten tidak tersedia. Pesan Anda tersimpan. Gunakan Coba lagi untuk melanjutkan.",

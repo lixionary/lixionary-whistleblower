@@ -8,6 +8,7 @@ import {
 } from "@whistle/shared";
 import { api, ApiError } from "@/lib/api";
 import { Check, ErrorBox, Field, Text, useAction, type Lang } from "./common";
+import { Evidence } from "./evidence";
 import { SafeMarkdown } from "./markdown";
 
 type Company = Pick<
@@ -121,7 +122,7 @@ export function IntakeChat({
     const timer = setInterval(() => void load(active).catch(() => {}), 5000);
     return () => clearInterval(timer);
   }, [active?.id, state?.pending?.id, expired]);
-  async function send() {
+  async function ensureActive() {
     let s = active;
     if (!s) {
       creation.current ??= { id: crypto.randomUUID(), code: secret() };
@@ -130,13 +131,17 @@ export function IntakeChat({
         method: "POST",
         body: {
           ...s,
-          consent: true,
+          consent,
           policyVersion: company.version,
           locale: lang,
         },
       }).catch(handle);
       adopt(s, next!);
     }
+    return s;
+  }
+  async function send() {
+    const s = await ensureActive();
     const content = body.trim();
     try {
       await invoke(s, "/messages", {
@@ -491,6 +496,35 @@ export function IntakeChat({
           )}
         </div>
       )}
+      <Evidence
+        t={(key) =>
+          ({
+            files: label("Evidence attachments", "Lampiran bukti"),
+            upload: label("Attach evidence", "Lampirkan bukti"),
+            preview: label("Preview", "Pratinjau"),
+            delete: label("Remove", "Hapus"),
+            redact: label("Apply redaction", "Terapkan penyamaran"),
+            review: label(
+              "I reviewed every page and removed identifying details.",
+              "Saya meninjau setiap halaman dan menghapus detail identitas.",
+            ),
+            approve: label("Approve evidence", "Setujui bukti"),
+            quarantined: label("Processing", "Diproses"),
+            review_status: label("Ready to review", "Siap ditinjau"),
+            approved: label(
+              "Approved for submission",
+              "Disetujui untuk dikirim",
+            ),
+            rejected: label("Processing failed", "Pemrosesan gagal"),
+            page: label("Page", "Halaman"),
+          })[key] ?? key
+        }
+        lang={lang}
+        closed={expired}
+        intake={active}
+        beforeUpload={ensureActive}
+        uploadDisabled={!policy || a.busy || expired}
+      />
     </>
   );
 }

@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, open, rename, unlink } from "node:fs/promises";
-import { join } from "node:path";
 import { sql } from "drizzle-orm";
 import type { FastifyRequest } from "fastify";
 import {
@@ -126,47 +124,7 @@ export async function queue(
     sql`insert into delivery_jobs(id,kind,case_id,body_enc,dedupe) values(${id},${kind},${caseId},${seal(body, config.keys, `job:${id}`)},${dedupe}) on conflict(dedupe) do nothing`,
   );
 }
-export async function store(
-  config: Config,
-  id: string,
-  kind: "original" | "derivative",
-  bytes: Buffer,
-) {
-  await mkdir(config.storage, { recursive: true, mode: 0o700 });
-  const path = join(config.storage, `${id}.${kind}.sealed`);
-  const temporary = path + "." + randomUUID() + ".tmp";
-  const handle = await open(temporary, "wx", 0o600);
-  try {
-    await handle.writeFile(
-      seal(bytes.toString("base64"), config.keys, `file:${id}:${kind}`),
-    );
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  await rename(temporary, path);
-  return path;
-}
-export async function fileBytes(
-  config: Config,
-  id: string,
-  kind: "original" | "derivative",
-) {
-  const data = await readFile(
-    join(config.storage, `${id}.${kind}.sealed`),
-    "utf8",
-  );
-  return Buffer.from(
-    unseal<string>(data, config.keys, `file:${id}:${kind}`),
-    "base64",
-  );
-}
-export async function removeFiles(config: Config, id: string) {
-  for (const kind of ["original", "derivative"])
-    await unlink(join(config.storage, `${id}.${kind}.sealed`)).catch((e) => {
-      if (e.code !== "ENOENT") throw e;
-    });
-}
+export { store, fileBytes, removeFiles } from "./storage.js";
 
 export async function queueVerification(
   db: Db | Tx,

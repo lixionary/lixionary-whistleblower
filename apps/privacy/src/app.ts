@@ -1,7 +1,9 @@
+import { evidenceRoutes } from "./evidence.js";
+import { backendOf, EvidenceStorageError } from "./storage.js";
 import { admissionRoutes } from "./admission.js";
 import { conversationRoutes } from "./conversation.js";
 import { intakeRoutes } from "./intake.js";
-import { randomUUID, randomInt, createHash } from "node:crypto";
+import { randomUUID, randomInt } from "node:crypto";
 import Fastify from "fastify";
 import multipart from "@fastify/multipart";
 import { sql } from "drizzle-orm";
@@ -28,12 +30,9 @@ import {
   caseCall,
   queue,
   queueVerification,
-  store,
   fileBytes,
   removeFiles,
-  evidenceAudit,
 } from "./service.js";
-import { redact } from "./transform.js";
 export interface Dependencies {
   db: Db;
   config: Config;
@@ -91,6 +90,8 @@ export async function buildApp(deps: Dependencies) {
     reply.status(404).send({ error: "not_found" }),
   );
   app.setErrorHandler((e, _req, reply) => {
+    if (e instanceof EvidenceStorageError)
+      return reply.status(503).send({ error: "storage_unavailable" });
     if (e instanceof PrivacyError)
       return reply.status(e.statusCode).send({ error: e.code });
     if (e instanceof z.ZodError)
@@ -313,174 +314,16 @@ export async function buildApp(deps: Dependencies) {
         });
         return { ok: true };
       });
-      api.post("/files", async (req, reply) => {
-        if (req.caseInfo!.state === "closed")
-          throw new PrivacyError(409, "case_closed");
-        if (
-          !(await limiter.hit(
-            mac(config.abuseKey, `upload:${req.cap!.sub}`),
-            20,
-            3600,
-          ))
-        )
-          throw new PrivacyError(429, "rate_limit");
-        const f = await req.file();
-        if (!f) throw new PrivacyError(400, "file_required");
-        const bytes = await f.toBuffer();
-        if (f.file.truncated) throw new PrivacyError(413, "file_too_large");
-        const id = randomUUID();
-        await db.transaction(async (tx) => {
-          await rows(
-            tx,
-            sql`select pg_advisory_xact_lock(hashtextextended(${req.cap!.sub},0))`,
-          );
-          const [quota] = await rows(
-            tx,
-            sql`select count(*)::int count,coalesce(sum(original_size),0)::bigint bytes from files where case_id=${req.cap!.sub}`,
-          );
-          if (
-            Number(quota!.count) >= 20 ||
-            Number(quota!.bytes) + bytes.length > 200 * 1024 * 1024
-          )
-            throw new PrivacyError(413, "case_file_limit");
-          const path = await store(config, id, "original", bytes);
-          try {
-            await rows(
-              tx,
-              sql`insert into files(id,case_id,original_path,original_sha256,original_size) values(${id},${req.cap!.sub},${path},${createHash("sha256").update(bytes).digest("hex")},${bytes.length})`,
-            );
-            await evidenceAudit(
-              tx,
-              config,
-              req.cap!.sub,
-              id,
-              "evidence_uploaded",
-              createHash("sha256").update(bytes).digest("hex"),
-            );
-          } catch (e) {
-            await removeFiles(config, id);
-            throw e;
-          }
-        });
-        return reply.status(202).send({ id, status: "quarantined" });
-      });
-      api.get("/files", async (req) => ({
-        files: await rows(
-          db,
-          sql`select id,status,mime,size,pages,sha256,error_code,created_at,published_at from files where case_id=${req.cap!.sub} order by created_at`,
-        ),
-      }));
-      api.get("/files/:id/preview", async (req, reply) => {
-        const { id } = z.object({ id: z.uuid() }).parse(req.params);
-        const [f] = await rows(
-          db,
-          sql`select * from files where id=${id} and case_id=${req.cap!.sub} and status in ('review','published')`,
-        );
-        if (!f) throw new PrivacyError(404, "not_found");
-        return reply
-          .header("Content-Type", String(f.mime))
-          .send(await fileBytes(config, id, "derivative"));
-      });
-      api.post("/files/:id/redact", async (req) => {
-        const { id } = z.object({ id: z.uuid() }).parse(req.params);
-        const v = z
-          .object({
-            rectangles: z
-              .array(
-                z.object({
-                  page: z.number().int().min(1).max(50),
-                  x: z.number().min(0).max(1),
-                  y: z.number().min(0).max(1),
-                  width: z.number().positive().max(1),
-                  height: z.number().positive().max(1),
-                }),
-              )
-              .min(1)
-              .max(200),
-          })
-          .parse(req.body);
-        await db.transaction(async (tx) => {
-          const [f] = await rows(
-            tx,
-            sql`select * from files where id=${id} and case_id=${req.cap!.sub} and status='review' for update`,
-          );
-          if (!f) throw new PrivacyError(409, "not_reviewable");
-          const bytes = await redact(
-            await fileBytes(config, id, "derivative"),
-            String(f.mime),
-            v.rectangles,
-          );
-          await store(config, id, "derivative", bytes);
-          await rows(
-            tx,
-            sql`update files set sha256=${createHash("sha256").update(bytes).digest("hex")},size=${bytes.length},transformation='rasterized;metadata_removed;reporter_redacted' where id=${id}`,
-          );
-          await evidenceAudit(
-            tx,
-            config,
-            req.cap!.sub,
-            id,
-            "evidence_redacted",
-            createHash("sha256").update(bytes).digest("hex"),
-          );
-        });
-        return { ok: true };
-      });
-      api.post("/files/:id/approve", async (req) => {
-        const { id } = z.object({ id: z.uuid() }).parse(req.params);
-        const approval = z
-          .object({
-            privacyReviewed: z.literal(true),
-            sha256: z.string().regex(/^[a-f0-9]{64}$/),
-          })
-          .parse(req.body);
-        if (req.caseInfo!.state === "closed")
-          throw new PrivacyError(409, "case_closed");
-        await db.transaction(async (tx) => {
-          const [f] = await rows(
-            tx,
-            sql`select * from files where id=${id} and case_id=${req.cap!.sub} and status='review' for update`,
-          );
-          if (!f) throw new PrivacyError(409, "not_reviewable");
-          if (f.sha256 !== approval.sha256)
-            throw new PrivacyError(409, "preview_changed");
-          await rows(
-            tx,
-            sql`update files set status='approved',approved_at=now() where id=${id}`,
-          );
-          await evidenceAudit(
-            tx,
-            config,
-            req.cap!.sub,
-            id,
-            "evidence_approved",
-            String(f.sha256),
-          );
-          await queue(tx, config, "publish", req.cap!.sub, { evidenceId: id });
-        });
-        return { ok: true };
-      });
-      api.delete("/files/:id", async (req) => {
-        if (req.caseInfo!.hold) throw new PrivacyError(409, "legal_hold");
-        const { id } = z.object({ id: z.uuid() }).parse(req.params);
-        await db.transaction(async (tx) => {
-          const [f] = await rows(
-            tx,
-            sql`select id from files where id=${id} and case_id=${req.cap!.sub} and status in ('review','rejected','quarantined') and (lease_at is null or lease_at<now()-interval '5 minutes') for update`,
-          );
-          if (!f) throw new PrivacyError(409, "not_removable");
-          await rows(tx, sql`delete from files where id=${id}`);
-          await evidenceAudit(
-            tx,
-            config,
-            req.cap!.sub,
-            id,
-            "evidence_withdrawn",
-          );
-          await removeFiles(config, id);
-        });
-        return { ok: true };
-      });
+      api.register(async (files) =>
+        evidenceRoutes(files, {
+          owner: async (req) => ({
+            kind: "case",
+            id: req.cap!.sub,
+            closed: req.caseInfo!.state === "closed",
+            hold: req.caseInfo!.hold,
+          }),
+        }),
+      );
     },
     { prefix: "/privacy/reporter" },
   );
@@ -584,7 +427,9 @@ export async function buildApp(deps: Dependencies) {
         if (!f) throw new PrivacyError(404, "not_found");
         return reply
           .header("Content-Type", String(f.mime))
-          .send(await fileBytes(config, v.evidenceId, "derivative"));
+          .send(
+            await fileBytes(config, v.evidenceId, "derivative", backendOf(f)),
+          );
       });
       internal.post("/delete", async (req) => {
         const v = z
@@ -604,9 +449,10 @@ export async function buildApp(deps: Dependencies) {
       );
       const files = await rows(
         tx,
-        sql`select id from files where case_id=${caseId} for update`,
+        sql`select id,storage_backend from files where case_id=${caseId} for update`,
       );
-      for (const f of files) await removeFiles(config, String(f.id));
+      for (const f of files)
+        await removeFiles(config, String(f.id), backendOf(f));
       for (const table of [
         "conversation_usage",
         "admission_grants",

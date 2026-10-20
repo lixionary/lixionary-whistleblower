@@ -1,3 +1,5 @@
+import { linkIntakeEvidence } from "./evidence.js";
+import { backendOf, EvidenceStorageError } from "./storage.js";
 import { randomUUID, createHash } from "node:crypto";
 import twilio from "twilio";
 import { sql } from "drizzle-orm";
@@ -21,6 +23,7 @@ export function startJobs(
   log: { error: (o: unknown, s: string) => void },
 ) {
   let busy = false,
+    maintaining = false,
     stopped = false;
   const mail = createEmailSender(config.email);
   const sms =
@@ -167,7 +170,12 @@ export function startJobs(
       );
       if (f) {
         try {
-          const original = await fileBytes(config, String(f.id), "original");
+          const original = await fileBytes(
+            config,
+            String(f.id),
+            "original",
+            backendOf(f),
+          );
           const response = await fetch(
             `${process.env.CONVERTER_ORIGIN ?? "http://127.0.0.1:6406"}/convert`,
             {
@@ -191,32 +199,42 @@ export function startJobs(
             String(f.id),
             "derivative",
             bytes,
+            backendOf(f),
           );
           await rows(
             db,
             sql`update files set status='review',derivative_path=${derivative},mime=${r.mime},size=${bytes.length},sha256=${createHash("sha256").update(bytes).digest("hex")},pages=${r.pages},transformation=${r.transformation},lease_at=null where id=${f.id} and lease_at=${f.lease_at}`,
           );
-          await evidenceAudit(
-            db,
-            config,
-            String(f.case_id),
-            String(f.id),
-            "evidence_processed",
-            createHash("sha256").update(bytes).digest("hex"),
-          );
+          if (f.case_id)
+            await evidenceAudit(
+              db,
+              config,
+              String(f.case_id),
+              String(f.id),
+              "evidence_processed",
+              createHash("sha256").update(bytes).digest("hex"),
+            );
         } catch (e) {
-          await rows(
-            db,
-            sql`update files set status='rejected',error_code='conversion_failed',lease_at=null where id=${f.id} and lease_at=${f.lease_at}`,
-          );
-          await evidenceAudit(
-            db,
-            config,
-            String(f.case_id),
-            String(f.id),
-            "evidence_rejected",
-          );
-          log.error(safeError(e), "evidence rejected");
+          if (e instanceof EvidenceStorageError) {
+            await rows(
+              db,
+              sql`update files set lease_at=now(),error_code='storage_unavailable' where id=${f.id} and lease_at=${f.lease_at}`,
+            );
+          } else {
+            await rows(
+              db,
+              sql`update files set status='rejected',error_code='conversion_failed',lease_at=null where id=${f.id} and lease_at=${f.lease_at}`,
+            );
+            if (f.case_id)
+              await evidenceAudit(
+                db,
+                config,
+                String(f.case_id),
+                String(f.id),
+                "evidence_rejected",
+              );
+            log.error(safeError(e), "evidence rejected");
+          }
         }
       }
     } catch (e) {
@@ -230,9 +248,29 @@ export function startJobs(
     active.add(operation);
     void operation.finally(() => active.delete(operation));
   };
-  const timer = setInterval(() => track(tick()), 2000);
+  async function maintainEvidence() {
+    if (maintaining || stopped) return;
+    maintaining = true;
+    try {
+      try {
+        await linkIntakeEvidence(db, config);
+      } catch (e) {
+        log.error(safeError(e), "private evidence linking failed");
+      }
+      await drainEvidenceDeletions(db, config);
+    } catch (e) {
+      log.error(safeError(e), "private evidence cleanup failed");
+    } finally {
+      maintaining = false;
+    }
+  }
+  const timer = setInterval(() => {
+    track(tick());
+    track(maintainEvidence());
+  }, 2000);
   timer.unref();
   track(tick());
+  track(maintainEvidence());
   const retention = setInterval(
     () =>
       track(
@@ -274,7 +312,7 @@ export async function expire(db: Db, config: Config) {
   // Unsubmitted intake expiry is independent of configured case retention.
   await rows(
     db,
-    sql`delete from intakes where case_id is null and created_at<now()-interval '24 hours'`,
+    sql`delete from intakes i where case_id is null and (created_at<now()-interval '24 hours' or revoked_at is not null) and not exists(select 1 from files f where f.intake_id=i.id and f.lease_at>now()-interval '5 minutes')`,
   );
   const info = (await (await caseCall(config, "retention", {})).json()) as {
     settings: CompanySettings;
@@ -301,7 +339,7 @@ export async function expire(db: Db, config: Config) {
           : "contacts";
     const candidates = await rows(
       db,
-      sql`select id,case_id,created_at from ${sql.identifier(table)} where case_id is not null and created_at<now()-${r[kind]}*interval '1 day' and ${allowed("case_id")} limit 100`,
+      sql`select id,case_id,created_at,${kind === "evidence" ? sql`storage_backend` : sql`null as storage_backend`} from ${sql.identifier(table)} where case_id is not null and created_at<now()-${r[kind]}*interval '1 day' and ${allowed("case_id")} ${kind === "transcripts" ? sql`and not exists(select 1 from files where intake_id=intakes.id)` : sql``} limit 100`,
     );
     for (const row of candidates) {
       const lease = (await (
@@ -318,7 +356,8 @@ export async function expire(db: Db, config: Config) {
           sql`select id from ${sql.identifier(table)} where id=${row.id} and created_at=${row.created_at} and created_at<now()-${r[kind]}*interval '1 day' ${kind === "evidence" ? sql`and (lease_at is null or lease_at<now()-interval '5 minutes')` : sql``} for update skip locked`,
         );
         if (!current) return false;
-        if (kind === "evidence") await removeFiles(config, String(row.id));
+        if (kind === "evidence")
+          await removeFiles(config, String(row.id), backendOf(row));
         await rows(
           tx,
           sql`delete from ${sql.identifier(table)} where id=${row.id}`,
@@ -349,7 +388,10 @@ export async function expire(db: Db, config: Config) {
       await caseCall(config, "case-exists", { caseId: i.case_id })
     ).json()) as { exists: boolean };
     if (!result.exists)
-      await rows(db, sql`delete from intakes where id=${i.id}`);
+      await rows(
+        db,
+        sql`delete from intakes where id=${i.id} and not exists(select 1 from files where intake_id=${i.id} and lease_at>now()-interval '5 minutes')`,
+      );
   }
   await rows(
     db,
@@ -359,4 +401,41 @@ export async function expire(db: Db, config: Config) {
     db,
     sql`delete from delivery_jobs where sent_at<now()-interval '7 days'`,
   );
+}
+
+export async function drainEvidenceDeletions(db: Db, config: Config) {
+  await db.transaction(async (tx) => {
+    const [d] = await rows(
+      tx,
+      sql`select * from evidence_deletions where next_at<=now() order by next_at for update skip locked limit 1`,
+    );
+    if (!d) return;
+    await rows(
+      tx,
+      sql`select pg_advisory_xact_lock(hashtextextended(${"evidence-object:" + d.id},0))`,
+    );
+    const [live] = await rows(
+      tx,
+      sql`select id from files where id=${d.id} and storage_backend=${d.storage_backend}`,
+    );
+    if (live) {
+      await rows(
+        tx,
+        sql`delete from evidence_deletions where id=${d.id} and storage_backend=${d.storage_backend}`,
+      );
+      return;
+    }
+    try {
+      await removeFiles(config, String(d.id), backendOf(d));
+      await rows(
+        tx,
+        sql`delete from evidence_deletions where id=${d.id} and storage_backend=${d.storage_backend}`,
+      );
+    } catch {
+      await rows(
+        tx,
+        sql`update evidence_deletions set attempts=attempts+1,next_at=now()+interval '1 minute' where id=${d.id} and storage_backend=${d.storage_backend}`,
+      );
+    }
+  });
 }

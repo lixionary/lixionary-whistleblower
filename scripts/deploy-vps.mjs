@@ -213,6 +213,7 @@ async function remoteDeploy(revision, id, folder) {
     resolve(root, "scripts/deploy-vps-remote.sh"),
     resolve(root, "scripts/deployment-backup.py"),
     resolve(root, "scripts/deployment-topology.py"),
+    resolve(root, "scripts/setup-storage-config.py"),
     `${host}:${remote}/`,
   ]);
   const command = `exec bash ${remote}/deploy-vps-remote.sh deploy ${revision} ${id}`;

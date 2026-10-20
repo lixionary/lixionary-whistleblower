@@ -55,6 +55,8 @@ git merge-base --is-ancestor HEAD "$revision" || die 'Deployment would rewind or
 [[ -z "$(git status --porcelain)" ]] || die 'VPS checkout changed during preflight.'
 git show "$revision:docker-compose.yml" > "$release/requested-compose.yml"
 git show "$revision:deploy/compose.vps.yml" > "$release/requested-vps.yml"
+# Preserve existing values while preparing the new service's protected files.
+if [[ -f "$release/setup-storage-config.py" ]]; then python3 "$release/setup-storage-config.py" "$config" >/dev/null; fi
 "${base[@]}" config --format json > "$release/previous-config.json"
 docker compose --project-name whistle-suite --project-directory "$root" \
   -f "$release/requested-compose.yml" -f "$release/requested-vps.yml" \
@@ -73,8 +75,7 @@ cleanup(){
   status=$?
   trap - EXIT
   if [[ -d "$release/staging" ]]; then
-    find "$release/staging" -type f -delete
-    rmdir "$release/staging" 2>/dev/null || true
+    find "$release/staging" -depth -delete
   fi
   if [[ "$status" -ne 0 && "$stopped" -eq 1 && "$migrating" -eq 0 ]]; then
     "${old[@]}" start "${old_writers[@]}" >/dev/null 2>&1 || true
@@ -146,6 +147,11 @@ vault="$(docker inspect whistle-suite-privacy-api-1 --format '{{range .Mounts}}{
 backup_image="$(docker inspect whistle-suite-case-api-1 --format '{{.Image}}')"
 docker run --rm --network none --user "$(id -u):$(id -g)" --entrypoint tar \
   -v "$vault:/vault:ro" -v "$release/staging:/snapshot" "$backup_image" -C /vault -cf /snapshot/vault.tar .
+# Older images have only a filesystem vault; newer images also export sealed S3 objects.
+private_image="$(docker inspect whistle-suite-privacy-api-1 --format '{{.Image}}')"
+if docker run --rm --network none --entrypoint test "$private_image" -f /app/dist/cli/evidence-storage.js; then
+  "${old[@]}" run -T --rm --no-deps --entrypoint node --user "$(id -u):$(id -g)" -v "$release/staging:/snapshot" privacy-api dist/cli/evidence-storage.js export /snapshot/objects >> "$release/backup.log" 2>&1
+fi
 tar -C "$config" -cf "$release/staging/config.tar" secrets suite.env
 cp "$root/docker-compose.yml" "$release/staging/docker-compose.yml"
 cp "$root/deploy/compose.vps.yml" "$release/staging/compose.vps.yml"
@@ -153,8 +159,7 @@ cp "$release/previous-images.json" "$release/staging/previous-images.json"
 cp /etc/nginx/sites-available/whistle-blower.lixionary.com.conf "$release/staging/nginx.conf"
 git rev-parse HEAD > "$release/staging/previous-revision"
 python3 "$release/deployment-backup.py" encrypt "$release/staging" "$release/snapshot.wbenc" "$release/recovery.key" >> "$release/backup.log" 2>&1
-find "$release/staging" -type f -delete
-rmdir "$release/staging"
+find "$release/staging" -depth -delete
 printf '__WB_BACKUP_READY__ %s\n' "$release_id"
 IFS= read -r -t 1800 acknowledgement || die 'Local backup verification timed out.'
 [[ "$acknowledgement" == "BACKUP_VERIFIED $release_id" ]] || die 'Local snapshot verification failed; migrations were not started.'
@@ -163,6 +168,7 @@ git merge --ff-only "$revision" > "$release/checkout.log" 2>&1
 [[ "$(git rev-parse HEAD)" == "$revision" ]] || die 'VPS checkout does not match the validated revision.'
 new=("${base[@]}" -f "$release/compose.images.json")
 "${new[@]}" config --quiet
+if [[ -f scripts/setup-storage.sh ]]; then bash scripts/setup-storage.sh "${new[@]:2}" > "$release/storage.log" 2>&1; fi
 printf 'Applying migrations, then starting the verified image IDs...\n'
 migrating=1
 "${new[@]}" run -T --rm --no-deps -e RATE_LIMIT_IMPORT_STDIN=1 case-migrate < "$release/case-rate-limits.json" > "$release/migrations.log" 2>&1

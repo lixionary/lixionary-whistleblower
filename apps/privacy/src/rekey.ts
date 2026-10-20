@@ -1,3 +1,4 @@
+import { backendOf } from "./storage.js";
 import { sql } from "drizzle-orm";
 import { safeError, seal, unseal } from "@whistle/runtime";
 import { loadConfig } from "./config.js";
@@ -31,14 +32,16 @@ try {
         config,
         String(f.id),
         "original",
-        await fileBytes(config, String(f.id), "original"),
+        await fileBytes(config, String(f.id), "original", backendOf(f)),
+        backendOf(f),
       );
       if (f.derivative_path)
         await store(
           config,
           String(f.id),
           "derivative",
-          await fileBytes(config, String(f.id), "derivative"),
+          await fileBytes(config, String(f.id), "derivative", backendOf(f)),
+          backendOf(f),
         );
     }
   });

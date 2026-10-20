@@ -22,3 +22,6 @@ networks:
   case-db-access:
     ipam:
       config: [{ subnet: 10.245.95.112/28 }]
+  evidence-storage:
+    ipam:
+      config: [{ subnet: 10.245.95.128/28 }]

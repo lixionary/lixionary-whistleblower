@@ -11,6 +11,7 @@ async function fixture(page: Page, lang: "en" | "id") {
   await page.addInitScript((l) => localStorage.setItem("wb_language", l), lang);
   let code = "",
     submitted: any = null;
+  const files: any[] = [];
   const bodies: any[] = [],
     admissions: string[] = [];
   const state: PrivateIntakeView = {
@@ -32,6 +33,7 @@ async function fixture(page: Page, lang: "en" | "id") {
   const f = {
     state,
     bodies,
+    files,
     admissions,
     fail: false,
     disabled: false,
@@ -63,7 +65,11 @@ async function fixture(page: Page, lang: "en" | "id") {
   await page.route("**/privacy/**", async (route) => {
     const req = route.request(),
       path = new URL(req.url()).pathname,
-      body = req.postData() ? req.postDataJSON() : undefined;
+      body =
+        req.postData() &&
+        req.headers()["content-type"]?.includes("application/json")
+          ? req.postDataJSON()
+          : undefined;
     if (path.includes("/admission/")) {
       admissions.push(path);
       return route.fulfill({
@@ -91,6 +97,48 @@ async function fixture(page: Page, lang: "en" | "id") {
           json: { error: "invalid_intake" },
         });
       return route.fulfill({ json: state });
+    }
+    if (path.endsWith("/files") && req.method() === "POST") {
+      const id =
+        req.headers()["x-evidence-id"] ??
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+      files.push({
+        id,
+        status: "review",
+        mime: "image/png",
+        pages: 1,
+        sha256: "a".repeat(64),
+        size: 68,
+        error_code: null,
+      });
+      return route.fulfill({
+        status: 202,
+        json: { id, status: "quarantined" },
+      });
+    }
+    if (path.endsWith("/files")) return route.fulfill({ json: { files } });
+    if (path.includes("/files/")) {
+      const file = files.find((f) => path.includes(f.id));
+      if (path.endsWith("/preview"))
+        return route.fulfill({
+          contentType: "image/png",
+          body: Buffer.from(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN2kAAAAASUVORK5CYII=",
+            "base64",
+          ),
+        });
+      if (path.endsWith("/approve")) {
+        file.status = "approved";
+        return route.fulfill({ json: { ok: true } });
+      }
+      if (path.endsWith("/redact")) {
+        file.sha256 = "b".repeat(64);
+        return route.fulfill({ json: { ok: true } });
+      }
+      if (req.method() === "DELETE") {
+        files.splice(files.indexOf(file), 1);
+        return route.fulfill({ json: { ok: true } });
+      }
     }
     if (req.method() === "DELETE") {
       state.messages = [];
@@ -450,4 +498,126 @@ test("expired continuation codes show a localized error", async ({
   await expect(page.locator("main").getByRole("alert")).toContainText(
     id ? "kedaluwarsa" : "expired",
   );
+});
+
+test("evidence before a message works without AI, resumes and is approved before manual submission", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    label = (en: string, indo: string) => (id ? indo : en),
+    f = await fixture(page, id ? "id" : "en");
+  f.disabled = true;
+  await page.goto("/report");
+  const upload = page.locator("input[type=file]");
+  await expect(upload).toBeDisabled();
+  await page
+    .getByRole("region", {
+      name: label("Private reporting assistant", "Asisten pelaporan pribadi"),
+    })
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  await upload.setInputFiles({
+    name: "evidence.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN2kAAAAASUVORK5CYII=",
+      "base64",
+    ),
+  });
+  await expect.poll(() => f.files.length).toBe(1);
+  const code = f.code;
+  await expect(page.getByText(code, { exact: true })).toBeVisible();
+  expect(f.bodies).toEqual([]);
+  await expect(page.getByRole("heading", { name: /WB-/ })).toHaveCount(0);
+  await page.reload();
+  await page
+    .getByLabel(label("Continuation code", "Kode untuk melanjutkan"), {
+      exact: true,
+    })
+    .fill(code);
+  await page
+    .getByRole("button", {
+      name: label("Continue conversation", "Lanjutkan percakapan"),
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", { name: label("Preview", "Pratinjau"), exact: true })
+    .click();
+  const approve = page.getByRole("button", {
+    name: label("Approve evidence", "Setujui bukti"),
+    exact: true,
+  });
+  await expect(approve).toBeDisabled();
+  await page
+    .getByLabel(
+      label(
+        "I reviewed every page and removed identifying details.",
+        "Saya meninjau setiap halaman dan menghapus detail identitas.",
+      ),
+    )
+    .check();
+  await approve.click();
+  await expect.poll(() => f.files[0]?.status).toBe("approved");
+  await page.screenshot({
+    path: test.info().outputPath("private-chat-evidence.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", {
+      name: label("Use a form instead", "Gunakan formulir"),
+      exact: true,
+    })
+    .click();
+  const review = page.getByRole("form", {
+    name: label("Review report", "Tinjau laporan"),
+    exact: true,
+  });
+  await review
+    .getByRole("textbox", { name: label("Title", "Judul"), exact: true })
+    .fill("Concern with private evidence");
+  await review
+    .getByRole("textbox", {
+      name: label("What happened?", "Apa yang terjadi?"),
+      exact: true,
+    })
+    .fill(
+      "This reviewed concern has evidence uploaded without any AI processing.",
+    );
+  await page
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  await review
+    .getByLabel(
+      label(
+        "I reviewed this content and removed details that could identify me.",
+        "Saya telah meninjau isi ini dan menghapus detail yang dapat mengidentifikasi saya.",
+      ),
+    )
+    .check();
+  await review
+    .getByRole("button", {
+      name: label("Submit report", "Kirim laporan"),
+      exact: true,
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "WB-TEST-1234" }),
+  ).toBeVisible();
+  expect(f.submitted).toMatchObject({
+    intakeId: f.state.id,
+    intakeToken: code,
+    aiConsent: false,
+  });
+  expect(f.bodies).toEqual([]);
 });

@@ -8,7 +8,7 @@ These guides explain the intended operating journey and the behavior supported b
 
 ## Scope and evidence
 
-The reporting flow was updated on **20 October 2026** for the local **1.2.0** implementation, including AI-first intake and continuation codes. Its API/privacy tests, desktop English and mobile Indonesian browser checks, typechecks, and production build were run locally. Production configuration and deployment were not verified. The staff-role guides retain their **19 October 2026**, revision **`af42998`** review baseline; their operating procedures were not changed by this intake update.
+The reporting flow was updated on **20 October 2026** for the local **1.3.0** implementation, including AI-first intake, continuation codes, private evidence before submission, and encrypted Garage storage. Its real-Garage lifecycle and recovery tests, API/privacy tests, desktop English and mobile Indonesian browser checks, typechecks, and production build were run locally. Production configuration and deployment were not verified. The staff-role guides retain their **19 October 2026**, revision **`af42998`** review baseline; their operating procedures were not changed by this intake update.
 
 “Intended practice” describes how the team should operate the available features. “Implementation boundary” identifies a distinction between that practice and what the application actually enforces. This documentation does not establish a regulatory certification or a jurisdiction-specific reporting obligation.
 

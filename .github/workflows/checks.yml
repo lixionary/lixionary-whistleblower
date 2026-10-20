@@ -24,7 +24,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m pip install cryptography==50.0.0
-      - run: bash -n scripts/deploy-vps-remote.sh scripts/backup-suite.sh scripts/restore-suite.sh
+      - run: bash -n scripts/deploy-vps-remote.sh scripts/backup-suite.sh scripts/restore-suite.sh scripts/setup-storage.sh
       - run: node --test scripts/test/*.test.mjs
   checks:
     runs-on: ubuntu-24.04
@@ -48,6 +48,7 @@ jobs:
           exit 1
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm test:storage
       - run: pnpm build
       - run: pnpm audit --prod --audit-level high
   container-acceptance:

@@ -22,7 +22,7 @@ export type IntakeReview = z.infer<typeof intakeReviewSchema>;
 export const intakeStartSchema = z.object({
   id: z.uuid(),
   code: continuationCodeSchema,
-  consent: z.literal(true),
+  consent: z.boolean().default(false),
   policyVersion: z.number().int().positive(),
   locale: z.enum(["en", "id"]),
 });

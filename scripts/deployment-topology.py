@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Only the planned service removals are permitted during the topology transition."""
+"""Permit planned service retirements and private Garage storage only."""
 import datetime
 import json
 import os
@@ -9,21 +9,27 @@ import sys
 
 RETIRED = {'scanner', 'case-redis', 'private-redis', 'privacy-worker', 'caddy'}
 RETIRED_VOLUMES = {'suite-case-redis', 'suite-private-redis', 'suite-clamav', 'suite-caddy'}
+GARAGE_IMAGE = "dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020"
 CORE = {'case-api', 'privacy-api', 'converter', 'web', 'case-db', 'private-db'}
 
 
 def validate(before, after):
     for kind, removable in [('networks', {'signature-updates'}), ('volumes', RETIRED_VOLUMES)]:
         old, new = before.get(kind, {}), after.get(kind, {})
-        if set(new) - set(old) or set(old) - set(new) - removable:
+        additions = {'evidence-storage'} if kind == 'networks' else {'garage-data', 'garage-meta'}
+        if set(new) - set(old) - additions or set(old) - set(new) - removable:
             raise ValueError('Unrelated infrastructure changes require a separate procedure')
         if any(old[k] != new[k] for k in set(old) & set(new)):
             raise ValueError('Existing infrastructure must remain unchanged')
     old, new = before['services'], after['services']
     if not CORE <= set(new) or RETIRED & set(new):
         raise ValueError('Expected the six-service runtime topology')
-    if set(old) - set(new) - RETIRED or set(new) - set(old):
+    if set(old) - set(new) - RETIRED or set(new) - set(old) - {'garage'}:
         raise ValueError('Unrelated service additions or removals are not permitted')
+    if 'garage' in new:
+        garage = new['garage']
+        if garage.get('image') != GARAGE_IMAGE or garage.get('ports') or set(garage.get('networks', {})) != {'evidence-storage'} or after.get('networks', {}).get('evidence-storage', {}).get('internal') is not True:
+            raise ValueError('Evidence storage must use the pinned private Garage service')
     for name in ['case-db', 'private-db']:
         if old[name] != new[name]:
             raise ValueError('Database infrastructure must remain unchanged')

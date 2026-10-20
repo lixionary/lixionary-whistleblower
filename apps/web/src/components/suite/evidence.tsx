@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import type { ActiveIntake } from "./intake-chat";
 import { api } from "@/lib/api";
 import {
   Check,
@@ -21,10 +22,16 @@ export function Evidence({
   t,
   lang,
   closed,
+  intake,
+  beforeUpload,
+  uploadDisabled = false,
 }: {
   t: (s: string) => string;
   lang: Lang;
   closed: boolean;
+  intake?: ActiveIntake;
+  beforeUpload?: () => Promise<ActiveIntake>;
+  uploadDisabled?: boolean;
 }) {
   const a = useAction(lang),
     [files, setFiles] = useState<File[]>([]),
@@ -38,11 +45,29 @@ export function Evidence({
       width: 0.1,
       height: 0.1,
     });
+  const draftMode = !!beforeUpload || !!intake;
+  const request = useCallback(
+    <T,>(path: string, opts: Parameters<typeof api>[1] = {}): Promise<T> => {
+      if (intake)
+        return api<T>(`/privacy/intake/${intake.id}${path}`, {
+          ...opts,
+          headers: { ...opts.headers, "x-intake-code": intake.code },
+        });
+      if (draftMode)
+        return Promise.reject(new Error("conversation_not_started"));
+      return privateApi<T>(path, opts);
+    },
+    [intake?.id, intake?.code, draftMode],
+  );
   const load = useCallback(async () => {
-    const r = await privateApi<{ files: File[] }>("/files");
+    const r = await request<{ files: File[] }>("/files");
     setFiles(r.files);
-  }, []);
+  }, [request]);
   useEffect(() => {
+    setFiles([]);
+    setSelected(undefined);
+    setUrl("");
+    setReview(false);
     void load().catch(() => {});
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void load().catch(() => {});
@@ -56,13 +81,17 @@ export function Evidence({
     [url],
   );
   async function preview(f: File) {
-    const { capability } = await api<{ capability: string }>(
-      "/api/reporter/capability",
-      { method: "POST", body: {} },
+    const headers: Record<string, string> = intake
+      ? { "x-intake-code": intake.code }
+      : {
+          Authorization: `Bearer ${(await api<{ capability: string }>("/api/reporter/capability", { method: "POST", body: {} })).capability}`,
+        };
+    const response = await fetch(
+      intake
+        ? `/privacy/intake/${intake.id}/files/${f.id}/preview`
+        : `/privacy/reporter/files/${f.id}/preview`,
+      { headers },
     );
-    const response = await fetch(`/privacy/reporter/files/${f.id}/preview`, {
-      headers: { Authorization: `Bearer ${capability}` },
-    });
     if (!response.ok) throw new Error("preview_failed");
     const next = URL.createObjectURL(await response.blob());
     setUrl(next);
@@ -78,17 +107,39 @@ export function Evidence({
           {t("upload")}
           <input
             type="file"
+            data-evidence-upload
             accept=".png,.jpg,.jpeg,.webp,.pdf,.docx,.xlsx,.pptx"
-            disabled={a.busy}
+            disabled={a.busy || uploadDisabled}
             onChange={(e) => {
-              const file = e.target.files?.[0];
+              const input = e.currentTarget;
+              const file = input.files?.[0];
               if (file)
                 void a.run(async () => {
                   const data = new FormData();
                   data.append("file", file);
-                  await privateApi("/files", { method: "POST", body: data });
-                  await load();
-                  e.target.value = "";
+                  const target = beforeUpload ? await beforeUpload() : intake;
+                  if (target) {
+                    await api(`/privacy/intake/${target.id}/files`, {
+                      method: "POST",
+                      body: data,
+                      headers: {
+                        "x-intake-code": target.code,
+                        "x-evidence-id": crypto.randomUUID(),
+                      },
+                    });
+                    setFiles(
+                      (
+                        await api<{ files: File[] }>(
+                          `/privacy/intake/${target.id}/files`,
+                          { headers: { "x-intake-code": target.code } },
+                        )
+                      ).files,
+                    );
+                  } else {
+                    await request("/files", { method: "POST", body: data });
+                    await load();
+                  }
+                  input.value = "";
                 });
             }}
           />
@@ -96,24 +147,53 @@ export function Evidence({
       )}
       <p>
         {lang === "id"
+          ? "PNG, JPEG, WebP, PDF, DOCX, XLSX, PPTX. Maksimal 20 MB per file, 20 file, total 200 MB."
+          : "PNG, JPEG, WebP, PDF, DOCX, XLSX, PPTX. Up to 20 MB per file, 20 files, 200 MB total."}
+      </p>
+      <p>
+        {lang === "id"
           ? "File asli disegel. Hanya versi yang disanitasi dan Anda setujui dibagikan kepada staf. Periksa semua halaman."
           : "Original files are sealed. Staff receive only the sanitized version you approve. Review every page."}
       </p>
+      {draftMode && (
+        <p>
+          {lang === "id"
+            ? "Lampiran tetap pribadi. AI tidak dapat membaca file ini. Versi yang Anda setujui dibagikan kepada staf hanya setelah laporan dikirim."
+            : "Attachments stay private. AI cannot read these files. Approved versions are shared with staff only after you submit your report."}
+        </p>
+      )}
+      {uploadDisabled && (
+        <p>
+          {lang === "id"
+            ? "Baca dan setujui kebijakan serta pemberitahuan privasi untuk melampirkan bukti."
+            : "Read and acknowledge the policy and privacy notice to attach evidence."}
+        </p>
+      )}
       {files.map((f) => (
         <article key={f.id}>
           <span>
-            {t("files")} {files.indexOf(f) + 1} · {t(f.status)}
+            {t("files")} {files.indexOf(f) + 1} ·{" "}
+            {f.status === "review"
+              ? lang === "id"
+                ? "Siap ditinjau"
+                : "Ready to review"
+              : t(f.status)}
           </span>
-          {["review", "published"].includes(f.status) && (
+          {["review", "approved", "published"].includes(f.status) && (
             <button onClick={() => void a.run(() => preview(f))}>
               {t("preview")}
             </button>
           )}
-          {["quarantined", "review", "rejected"].includes(f.status) && (
+          {[
+            "quarantined",
+            "review",
+            "rejected",
+            ...(draftMode ? ["approved"] : []),
+          ].includes(f.status) && (
             <button
               onClick={() =>
                 void a.run(async () => {
-                  await privateApi(`/files/${f.id}`, { method: "DELETE" });
+                  await request(`/files/${f.id}`, { method: "DELETE" });
                   await load();
                   if (selected?.id === f.id) {
                     setSelected(undefined);
@@ -176,13 +256,11 @@ export function Evidence({
                 disabled={a.busy}
                 onClick={() =>
                   void a.run(async () => {
-                    await privateApi(`/files/${selected.id}/redact`, {
+                    await request(`/files/${selected.id}/redact`, {
                       method: "POST",
                       body: { rectangles: [rect] },
                     });
-                    const latest = await privateApi<{ files: File[] }>(
-                      "/files",
-                    );
+                    const latest = await request<{ files: File[] }>("/files");
                     await preview(
                       latest.files.find((f) => f.id === selected.id)!,
                     );
@@ -200,7 +278,7 @@ export function Evidence({
                 disabled={!review || a.busy}
                 onClick={() =>
                   void a.run(async () => {
-                    await privateApi(`/files/${selected.id}/approve`, {
+                    await request(`/files/${selected.id}/approve`, {
                       method: "POST",
                       body: { privacyReviewed: true, sha256: selected.sha256 },
                     });

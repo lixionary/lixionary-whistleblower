@@ -15,7 +15,7 @@ if [[ -f "$config_dir/active-release.json" ]]; then
   compose=(docker compose -f docker-compose.yml -f deploy/compose.vps.yml -f "$config_dir/active-release.json" --env-file "$env_file")
 fi
 restart_services(){ "${compose[@]}" start case-api privacy-api web >/dev/null; }
-trap 'restart_services; find "$staging" -type f -delete; rmdir "$staging" 2>/dev/null || true' EXIT
+trap 'restart_services; find "$staging" -depth -delete' EXIT
 "${compose[@]}" stop web case-api privacy-api >/dev/null
 "${compose[@]}" run --rm --no-deps case-migrate node dist/cli/audit.js checkpoint - > "$staging/checkpoint.json"
 "${compose[@]}" exec -T case-db pg_dump -U postgres -Fc suite_cases > "$staging/cases.dump"
@@ -23,6 +23,10 @@ trap 'restart_services; find "$staging" -type f -delete; rmdir "$staging" 2>/dev
 vault_volume="$(docker inspect "$("${compose[@]}" ps --all -q privacy-api)" --format '{{range .Mounts}}{{if eq .Destination "/data/privacy"}}{{.Name}}{{end}}{{end}}')"
 [[ -n "$vault_volume" ]] || { echo 'Vault volume not found'; exit 1; }
 docker run --rm --network none -v "$vault_volume:/vault:ro" -v "$staging:/snapshot" alpine:3.22 tar -C /vault -cf /snapshot/vault.tar .
+private_image="$(docker inspect "$("${compose[@]}" ps --all -q privacy-api)" --format '{{.Image}}')"
+if docker run --rm --network none --entrypoint test "$private_image" -f /app/dist/cli/evidence-storage.js; then
+  "${compose[@]}" run -T --rm --no-deps --entrypoint node --user "$(id -u):$(id -g)" -v "$staging:/snapshot" privacy-api dist/cli/evidence-storage.js export /snapshot/objects >/dev/null
+fi
 tar -C "$config_dir" -cf "$staging/config.tar" secrets suite.env
 retention="$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.argv[1])); if(!c.policy?.configured || !c.policy.body.retention) process.exit(1); process.stdout.write(String(c.policy.body.retention.backups))' "$staging/checkpoint.json")"
 held="$(node -e 'const c=JSON.parse(require("fs").readFileSync(process.argv[1]));process.stdout.write(c.held.length?"held":"routine")' "$staging/checkpoint.json")"

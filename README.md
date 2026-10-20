@@ -1,10 +1,10 @@
 # Speak Up — company whistleblowing suite
 
-An internal employee reporting portal with email OTP admission, anonymous submission, a private case mailbox, optional private case contacts, assigned investigators, independent closure approval, and company administration. English and Indonesian interfaces are included.
+An internal employee reporting portal with anonymous submission, a private case mailbox, optional private case contacts, assigned investigators, independent closure approval, and company administration. English and Indonesian interfaces are included.
 
 Reporter contacts, raw assistant conversations, and private report drafts live in a separate service, database, encryption keyring, and file vault. Reporters need no account or employee-directory verification. Analysts, managers, and system administrators have no contact-reveal endpoint. OTP proves control of an optional notification destination; it does not prove identity. Only reporter-reviewed reports, updates, and sanitized evidence enter the staff workspace.
 
-Creating a report opens a private AI conversation directly, with a greeting and question in the selected English or Indonesian language. Policy acknowledgment and AI consent appear inline before the first message. The reporter receives a private continuation code when starting, then reviews an editable generated report before explicit submission. The report number and access/recovery secrets appear only after submission. An optional manual form works without AI consent or availability.
+Creating a report opens a private AI conversation directly, with a greeting and question in the selected English or Indonesian language. Policy acknowledgment and AI consent appear inline before the first message. The reporter receives a private continuation code on the first message or evidence upload, then reviews an editable generated report before explicit submission. The report number and access/recovery secrets appear only after submission. An optional manual form works without AI consent or availability.
 
 `main` contains the new suite, including ISO 37002:2021 (_Whistleblowing management systems — Guidelines_) alignment for broader stakeholder admission, anti-retaliation detriment assessment and reporting, procedural fairness and subject right-to-be-heard checks, root-cause and systemic action tracking, anonymous post-closure reporter surveys, and effectiveness analytics. `main-mvp` preserves the original MVP without the gap assessment. This implementation starts with **new suite databases and volumes**; it does not migrate or import MVP reports.
 
@@ -18,7 +18,7 @@ pnpm suite:setup
 pnpm suite:dev
 ```
 
-Open the portal at <http://localhost:9551> and the development mailbox at <http://localhost:6403>. The backend is available at `127.0.0.1:9550`; the case database at `127.0.0.1:9552` maps to PostgreSQL's container port 5432. These host ports bind only to localhost. The separate identity database has no published port. Production runs six containers: two databases, two APIs, the frontend, and an isolated converter. Private jobs run inside the privacy API; rate limits are durable PostgreSQL counters. Mailpit is development-only, and migration containers exit after provisioning.
+Open the portal at <http://localhost:9551> and the development mailbox at <http://localhost:6403>. The backend is available at `127.0.0.1:9550`; the case database at `127.0.0.1:9552` maps to PostgreSQL's container port 5432. These host ports bind only to localhost. The separate identity database has no published port. Production runs seven containers: two databases, two APIs, the frontend, an isolated converter, and private Garage object storage. Garage publishes no host ports. Private jobs run inside the privacy API; rate limits are durable PostgreSQL counters. Mailpit is development-only, and migration containers exit after provisioning.
 
 Create the first administrator only on an empty staff table:
 
@@ -33,11 +33,13 @@ Staff can also use **Sign in with Google** when configured. Google login is limi
 
 The continuation code restores an unfinished private conversation and saved review edits across devices for **24 hours from creation**, without extension. It is a bearer credential: anyone holding it can read the draft. Save or download it before leaving. Only its hash is stored; browser state stays in memory. Expired unsubmitted drafts are deleted. After submission, continuation access ends and the reporter uses the case code, access secret, and recovery secret. Optional email can activate private notifications after verification; it does not provide case recovery.
 
-The assistant helps gather facts without inventing missing information. **Review report** opens editable submission fields; **Use a form instead** preserves any saved draft. Chat content stays private. In the submitted case portal, **Review update** creates an editable follow-up; only updates explicitly reviewed and shared enter the investigator mailbox. Evidence is uploaded and reviewed after submission.
+The assistant helps gather facts without inventing missing information. **Review report** opens editable submission fields; **Use a form instead** preserves any saved draft. Chat content stays private. In the submitted case portal, **Review update** creates an editable follow-up; only updates explicitly reviewed and shared enter the investigator mailbox. Evidence can be attached before the first message, beside the chat or manual form, without AI consent. The first upload starts the same private 24-hour draft and continuation code. Files are never sent to AI. Review, redact, and explicitly approve each sanitized preview; approved versions reach staff only after submission. Processing or unapproved files do not block submitting the report and remain available privately in the case portal. PNG/JPEG/WebP, PDF, DOCX, XLSX, and PPTX are supported, with limits of 20 MB per file, 20 files, and 200 MB per draft/case.
 
 AI allows 30 message attempts and three draft-generation attempts per intake per UTC day, carrying usage into the case on submission. Failed provider attempts consume allowance; replayed requests do not. A failed message stays saved and can be retried without duplication. AI outages or disabled configuration do not prevent manual reporting or case access. Submitted conversation history follows configured transcript retention and legal holds. Consent withdrawal erases private conversation content unless held; previously shared case updates remain. Existing cases keep their current credentials and follow-up behavior.
 
 Administrators manage staff accounts at `/staff/admin/users`: a table-only list links to separate creation and prefilled edit pages. Creation sends an invitation; editing supports name, role and active status with a read-only account email, plus password reset emails for active accounts. Reset links expire after 30 minutes and preserve MFA. The former `/staff/admin/staff` page redirects to Users. Workspace and Administration menu groups retain existing role permissions on desktop and mobile.
+
+Compose defaults new evidence to Garage through its S3 API, using a private bucket and a restricted application key. Originals and derivatives are encrypted by the privacy service before storage. Existing filesystem evidence stays readable using its recorded backend; see the [storage migration and recovery procedure](docs/runbook.md#evidence-storage-and-migration). This is a single-host deployment with backups, without high availability. `pnpm suite:dev` initializes Garage automatically; `pnpm storage:setup` initializes it separately.
 
 Development SMTP goes to Mailpit. SMS requires Twilio credentials. AI requires a MiniMax key **and** the company AI setting; it is off by default. Generated secrets are file based, ignored by Git, and never printed by setup.
 
@@ -63,7 +65,7 @@ The tracker is disabled until configured. See [Jira configuration](docs/runbook.
 
 ## Versioning
 
-The root `package.json` is the release-version source of truth. All workspace packages share version `1.0.0`. The footer on reporter and staff screens shows the version; its tooltip includes the build revision. Build metadata is embedded in the frontend assets and changes only after rebuilding.
+The root `package.json` is the release-version source of truth. All workspace packages share version `1.3.0`. The footer on reporter and staff screens shows the version; its tooltip includes the build revision. Build metadata is embedded in the frontend assets and changes only after rebuilding.
 
 ```sh
 pnpm version:check          # Validate every workspace package
@@ -86,10 +88,11 @@ docker run -d --name whistle-suite-test-db --env-file .suite-dev/postgres.env \
   -p 127.0.0.1:6412:5432 postgres:17-alpine
 pnpm typecheck
 pnpm test
+pnpm test:storage  # Real Garage lifecycle, migration, and encrypted restore
 pnpm build
 ```
 
-Integration tests recreate only `whistle_suite_test` and `whistle_privacy_test` on this test database. Run one full integration test process at a time.
+Integration tests recreate only `whistle_suite_test` and `whistle_privacy_test` on this test database. Storage tests also recreate `whistle_evidence_storage_test` and use a dedicated Garage container on localhost:6414. Run one full integration test process at a time.
 
 For browser and real evidence-pipeline checks, start the development suite first:
 

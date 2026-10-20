@@ -69,6 +69,9 @@ async function exercise(
       return [];
     },
   } as unknown as Db;
+  (db as unknown as { transaction: unknown }).transaction = async (
+    fn: (tx: Db) => Promise<unknown>,
+  ) => fn(db);
   let release: (response: Response) => void = () => {};
   const response = new Response(
     rejected ? "provider failure" : '{"data":[{"code":"EM_104"}]}',

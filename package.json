@@ -1,7 +1,7 @@
 {
   "name": "lixionary-whistleblower",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
   "type": "module",
   "packageManager": "pnpm@11.9.0",
   "engines": {
@@ -22,13 +22,15 @@
     "db:migrate": "pnpm --filter @whistle/server db:migrate",
     "admin:create": "pnpm --filter @whistle/server admin:create",
     "suite:setup": "node scripts/setup-suite.mjs",
-    "suite:dev": "docker compose --env-file .suite-dev/suite.env --profile development up --build -d",
+    "suite:dev": "pnpm storage:setup && docker compose --env-file .suite-dev/suite.env --profile development up --build -d",
     "test:integration": "pnpm --filter @whistle/server test",
     "test:browser": "pnpm --filter @whistle/web exec playwright test",
     "dev:privacy": "pnpm --filter @whistle/privacy dev",
     "deploy:vps": "node scripts/deploy-vps.mjs",
     "email:configure:vps": "node scripts/configure-zoho-vps.mjs",
-    "test:deploy": "node --test scripts/test/*.test.mjs"
+    "test:deploy": "node --test scripts/test/*.test.mjs",
+    "storage:setup": "bash scripts/setup-storage.sh",
+    "test:storage": "node scripts/test-storage.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.6",

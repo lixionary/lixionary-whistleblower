@@ -74,6 +74,27 @@ for (const name of [
   "backup_known_hosts",
 ])
   await put(name, "");
+await put("storage_access_key", "GK" + randomBytes(16).toString("hex"));
+await put("storage_secret_key", rnd());
+const garageRpc = await put("garage_rpc_secret", rnd());
+const garageAdmin = await put("garage_admin_token", rnd());
+await put(
+  "garage_config",
+  `metadata_dir = "/meta"
+data_dir = "/data"
+db_engine = "sqlite"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "garage:3901"
+rpc_secret = "${garageRpc}"
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+[admin]
+api_bind_addr = "127.0.0.1:3903"
+admin_token = "${garageAdmin}"
+`,
+);
 const domain = process.env.SUITE_DOMAIN ?? "localhost";
 const production = process.argv.includes("--production");
 if (production && domain === "localhost")
