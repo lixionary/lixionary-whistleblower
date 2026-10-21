@@ -6,7 +6,7 @@ test("anonymous reporting, secret receipt, private conversation and recovery", a
 }, info) => {
   const id = info.project.name === "mobile-id";
   await page.goto("/");
-  if (id) await selectLanguage(page, "id");
+  await selectLanguage(page, id ? "id" : "en");
   await page
     .getByRole("link", { name: id ? "Buat laporan" : "Create a report" })
     .first()

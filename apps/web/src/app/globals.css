@@ -451,6 +451,20 @@ textarea {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.language-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.language-flag {
+  flex-shrink: 0;
+  width: 24px;
+  height: 16px;
+  object-fit: cover;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 12%);
+}
 .language-trigger svg {
   flex-shrink: 0;
 }

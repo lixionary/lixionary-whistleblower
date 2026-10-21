@@ -8,7 +8,7 @@ test("staff MFA and assigned review workflow preserve contact privacy", async ({
   const id = info.project.name === "mobile-id",
     name = id ? "manager2" : "manager";
   await page.goto("/staff/login");
-  if (id) await selectLanguage(page, "id");
+  await selectLanguage(page, id ? "id" : "en");
   await page
     .getByLabel("Email", { exact: true })
     .fill(`e2e-${name}@example.test`);
@@ -99,6 +99,7 @@ test("administration manages configuration without viewing case or reporter iden
     "Administrator smoke is covered on desktop.",
   );
   await page.goto("/staff/login");
+  await selectLanguage(page, "en");
   await page
     .getByLabel("Email", { exact: true })
     .fill("e2e-admin@example.test");

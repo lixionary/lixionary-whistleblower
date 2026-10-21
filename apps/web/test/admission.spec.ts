@@ -316,6 +316,9 @@ test("chat first, selected language, private code, editable review, resume and f
     page.getByRole("textbox", { name: label("Title", "Judul"), exact: true }),
   ).not.toBeVisible();
   await expect(page.getByRole("log")).toContainText(id ? "Halo" : "Hello");
+  await expect(
+    page.getByText(label("Your Assistant", "Asisten Anda"), { exact: true }),
+  ).toBeVisible();
   expect(f.bodies).toEqual([]);
   const assistant = await start(page, id);
   await expect(page.getByText(f.code, { exact: true })).toBeVisible();

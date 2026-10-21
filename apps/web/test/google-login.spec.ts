@@ -109,7 +109,7 @@ async function mockGoogle(
 }
 async function open(page: Page, id: boolean, next = "/staff/account") {
   await page.goto(`/staff/login?next=${encodeURIComponent(next)}`);
-  if (id) await selectLanguage(page, "id");
+  await selectLanguage(page, id ? "id" : "en");
 }
 async function googleButton(page: Page, id: boolean) {
   return page.getByRole("button", {
@@ -132,7 +132,7 @@ test("password inputs wait for hydration and preserve quickly entered credential
   });
   await page.goto("/staff/login", { waitUntil: "commit" });
   const email = page.getByLabel("Email", { exact: true });
-  const password = page.getByLabel("Password", { exact: true });
+  const password = page.getByLabel("Kata sandi", { exact: true });
   try {
     await expect(email).toBeDisabled();
     await expect(password).toBeDisabled();
@@ -141,7 +141,7 @@ test("password inputs wait for hydration and preserve quickly entered credential
   }
   await email.fill("staff@gmail.com");
   await password.fill("Synthetic password input");
-  await expect(await googleButton(page, false)).toBeVisible();
+  await expect(await googleButton(page, true)).toBeVisible();
   await expect(email).toHaveValue("staff@gmail.com");
   await expect(password).toHaveValue("Synthetic password input");
 });

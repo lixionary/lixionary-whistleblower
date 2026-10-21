@@ -29,22 +29,32 @@ for (const path of ["/staff/login", "/staff/account"]) {
     await mockStaff(page);
     await page.goto(path);
     const selector = page.getByRole("combobox", { name: "Language" });
-    await expect(selector).toHaveText("English");
+    await expect(selector).toHaveText("Bahasa Indonesia");
+    await expect(selector.locator("img")).toHaveAttribute(
+      "src",
+      "/flags/id.svg",
+    );
+    await expect(page.locator("html")).toHaveAttribute("lang", "id");
     await selector.click();
     await expect(
-      page.getByRole("option", { name: "English", exact: true }),
+      page.getByRole("option", { name: "Bahasa Indonesia", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
-    await page.getByRole("option", { name: "Bahasa Indonesia" }).click();
-    await expect(selector).toHaveText("Bahasa Indonesia");
+    await page.getByRole("option", { name: "English" }).click();
+    await expect(selector).toHaveText("English");
+    await expect(selector.locator("img")).toHaveAttribute(
+      "src",
+      "/flags/gb.svg",
+    );
     await expect(selector).toBeFocused();
-    await expect(page.locator("html")).toHaveAttribute("lang", "id");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
     await expect(page.getByRole("listbox")).toHaveCount(0);
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("wb_language")))
-      .toBe("id");
+      .toBe("en");
     await page.reload();
-    await expect(selector).toHaveText("Bahasa Indonesia");
-    await expect(page.locator("html")).toHaveAttribute("lang", "id");
+    await expect(selector).toHaveText("English");
+    await expect(page.locator("html")).toHaveAttribute("lang", "en");
+    await selectLanguage(page, "id");
     if (path === "/staff/login") {
       await expect(
         page.getByLabel("Kata sandi", { exact: true }),

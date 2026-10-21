@@ -5,8 +5,8 @@ import { Check, ChevronDown } from "lucide-react";
 import type { Lang } from "./common";
 
 const languages = [
-  { value: "en", label: "English" },
-  { value: "id", label: "Bahasa Indonesia" },
+  { value: "en", label: "English", flag: "/flags/gb.svg" },
+  { value: "id", label: "Bahasa Indonesia", flag: "/flags/id.svg" },
 ] as const;
 
 export function LanguageSelector({
@@ -106,7 +106,16 @@ export function LanguageSelector({
           setOpen(!open);
         }}
       >
-        <span>{languages[selected].label}</span>
+        <span className="language-label">
+          <img
+            className="language-flag"
+            src={languages[selected].flag}
+            alt=""
+            width={24}
+            height={16}
+          />
+          <span>{languages[selected].label}</span>
+        </span>
         <ChevronDown size={16} aria-hidden="true" />
       </button>
       {open && (
@@ -128,7 +137,16 @@ export function LanguageSelector({
               onClick={() => choose(index)}
               lang={language.value}
             >
-              <span>{language.label}</span>
+              <span className="language-label">
+                <img
+                  className="language-flag"
+                  src={language.flag}
+                  alt=""
+                  width={24}
+                  height={16}
+                />
+                <span>{language.label}</span>
+              </span>
               {value === language.value && (
                 <Check size={16} aria-hidden="true" />
               )}

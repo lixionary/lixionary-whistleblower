@@ -447,7 +447,7 @@ export function IntakeChat({
               <div className="intake-card-head">
                 <span>
                   <Lock size={16} aria-hidden="true" />
-                  {label("Private assistant", "Asisten pribadi")}
+                  {label("Your Assistant", "Asisten Anda")}
                 </span>
                 <span className="badge badge-dot">
                   {label("Private", "Pribadi")}

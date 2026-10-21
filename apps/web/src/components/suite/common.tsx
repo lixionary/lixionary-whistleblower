@@ -533,10 +533,10 @@ export const strings = {
 } satisfies Record<string, readonly [string, string]>;
 export type Lang = "en" | "id";
 export function useLanguage() {
-  const [lang, setLang] = useState<Lang>("en");
+  const [lang, setLang] = useState<Lang>("id");
   useEffect(() => {
     const l = localStorage.getItem("wb_language");
-    if (l === "id") setLang("id");
+    if (l === "en" || l === "id") setLang(l);
   }, []);
   useEffect(() => {
     document.documentElement.lang = lang;

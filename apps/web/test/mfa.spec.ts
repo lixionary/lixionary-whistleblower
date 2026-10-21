@@ -41,7 +41,7 @@ async function mockStaffAuth(page: Page, enrolled = false) {
 
 async function signIn(page: Page, id: boolean) {
   await page.goto("/staff/login");
-  if (id) await selectLanguage(page, "id");
+  await selectLanguage(page, id ? "id" : "en");
   await page.getByLabel("Email", { exact: true }).fill("e2e-qr@example.test");
   await page
     .getByLabel(id ? "Kata sandi" : "Password", { exact: true })

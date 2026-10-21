@@ -53,7 +53,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="id"
       className={`${inter.variable} ${cormorant.variable} ${jetbrains.variable}`}
     >
       <body className="min-h-dvh">
