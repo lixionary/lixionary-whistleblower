@@ -747,6 +747,10 @@ const errors: Record<string, [string, string]> = {
     "This continuation code is invalid or no longer available.",
     "Kode percakapan ini tidak valid atau tidak tersedia lagi.",
   ],
+  continuation_code_unavailable: [
+    "A continuation code could not be reserved. Please try again.",
+    "Kode untuk melanjutkan belum dapat disiapkan. Silakan coba lagi.",
+  ],
   intake_expired: [
     "This conversation expired 24 hours after it started. Start a new report.",
     "Percakapan ini kedaluwarsa 24 jam setelah dimulai. Buat laporan baru.",

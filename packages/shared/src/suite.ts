@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { continuationCodeSchema } from "./continuation-code.js";
 export const locales = ["en", "id"] as const;
 export type Locale = (typeof locales)[number];
 export const staffRoles = ["admin", "manager", "analyst"] as const;
@@ -78,7 +79,7 @@ export const suiteReportSchema = z.object({
     .or(z.literal("").transform(() => undefined)),
   hp: z.string().max(100).optional(),
   intakeId: z.uuid().optional(),
-  intakeToken: z.string().min(20).max(200).optional(),
+  intakeToken: continuationCodeSchema.optional(),
 });
 export type SuiteReport = z.infer<typeof suiteReportSchema>;
 export const bodySchema = z.object({

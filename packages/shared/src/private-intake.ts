@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { suiteReportSchema } from "./suite.js";
 import type { ChatMessage } from "./intake.js";
+import { continuationCodeSchema } from "./continuation-code.js";
 
 // A continuation credential is separate from all submitted-case credentials.
-export const continuationCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+export { continuationCodeSchema } from "./continuation-code.js";
 export const intakeReviewSchema = suiteReportSchema
   .omit({
     privacyReviewed: true,

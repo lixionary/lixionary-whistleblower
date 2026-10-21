@@ -2,7 +2,8 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { sql } from "drizzle-orm";
 import { randomInt, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { admissionVerifySchema } from "@whistle/shared";
+import { admissionVerifySchema, continuationCodeSchema } from "@whistle/shared";
+import { continuationHash } from "./continuation.js";
 import {
   digest,
   mac,
@@ -205,7 +206,7 @@ export async function admissionRoutes(app: FastifyInstance) {
         const v = z
           .object({
             intakeId: z.uuid(),
-            intakeToken: rawToken,
+            intakeToken: continuationCodeSchema,
             caseId: z.uuid(),
             submissionHash: z.string().regex(/^[a-f0-9]{64}$/),
           })
@@ -214,7 +215,7 @@ export async function admissionRoutes(app: FastifyInstance) {
           await lockIntake(tx, v.intakeId);
           const [r] = await rows(
             tx,
-            sql`select id from intakes where id=${v.intakeId} and token_hash=${digest(v.intakeToken)} and case_id=${v.caseId} and submission_hash=${v.submissionHash} for update`,
+            sql`select id from intakes where id=${v.intakeId} and token_hash=${continuationHash(config, v.intakeToken)} and case_id=${v.caseId} and submission_hash=${v.submissionHash} for update`,
           );
           if (!r) return;
           const result = (await (
@@ -248,7 +249,7 @@ export async function admissionRoutes(app: FastifyInstance) {
             policyVersion: z.number().int().positive().optional(),
             locale: z.enum(["en", "id"]).default("en"),
             intakeId: z.uuid().optional(),
-            intakeToken: z.string().optional(),
+            intakeToken: continuationCodeSchema.optional(),
             reporterEmail: z
               .string()
               .trim()
@@ -284,7 +285,7 @@ export async function admissionRoutes(app: FastifyInstance) {
             if (v.intakeId) {
               const [i] = await rows(
                 tx,
-                sql`update intakes set case_id=${v.caseId} where id=${v.intakeId} and admission_id=${g.id} and token_hash=${digest(v.intakeToken ?? "")} and revoked_at is null and case_id is null returning id`,
+                sql`update intakes set case_id=${v.caseId} where id=${v.intakeId} and admission_id=${g.id} and token_hash=${v.intakeToken ? continuationHash(config, v.intakeToken) : ""} and revoked_at is null and case_id is null returning id`,
               );
               if (!i) throw new PrivacyError(409, "invalid_intake");
             } else

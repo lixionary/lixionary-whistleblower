@@ -3,6 +3,7 @@ import { backendOf, EvidenceStorageError } from "./storage.js";
 import { admissionRoutes } from "./admission.js";
 import { conversationRoutes } from "./conversation.js";
 import { intakeRoutes } from "./intake.js";
+import { continuationHash } from "./continuation.js";
 import { randomUUID, randomInt } from "node:crypto";
 import Fastify from "fastify";
 import multipart from "@fastify/multipart";
@@ -19,7 +20,7 @@ import {
   createMinimaxClient,
   type Capability,
 } from "@whistle/runtime";
-import type { CompanySettings } from "@whistle/shared";
+import { continuationCodeSchema, type CompanySettings } from "@whistle/shared";
 import type { Config } from "./config.js";
 import { rows, type Db } from "./db/client.js";
 import {
@@ -379,7 +380,7 @@ export async function buildApp(deps: Dependencies) {
           .object({
             caseId: z.uuid(),
             intakeId: z.uuid(),
-            intakeToken: z.string(),
+            intakeToken: continuationCodeSchema,
             eventId: z.uuid(),
           })
           .parse(req.body);
@@ -396,7 +397,7 @@ export async function buildApp(deps: Dependencies) {
           if (!r) return;
           const [intake] = await rows(
             tx,
-            sql`update intakes set case_id=${v.caseId} where id=${v.intakeId} and token_hash=${digest(v.intakeToken)} and (case_id is null or case_id=${v.caseId}) and revoked_at is null and created_at>now()-interval '24 hours' returning id`,
+            sql`update intakes set case_id=${v.caseId} where id=${v.intakeId} and token_hash=${continuationHash(config, v.intakeToken)} and (case_id is null or case_id=${v.caseId}) and revoked_at is null and created_at>now()-interval '24 hours' returning id`,
           );
           if (!intake) throw new PrivacyError(409, "invalid_intake");
         });

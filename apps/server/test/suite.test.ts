@@ -17,7 +17,7 @@ import {
   generateCrockford,
   verifyCapability,
 } from "@whistle/runtime";
-import { defaultSettings } from "@whistle/shared";
+import { defaultSettings, createContinuationCode } from "@whistle/shared";
 import { buildApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { createDb, rows } from "../src/db/client.js";
@@ -2141,8 +2141,14 @@ describe("suite privacy and workflow boundaries", () => {
   it("keeps anonymous intake private, resumes edits, follows locale and submits exactly once", async () => {
     await withConversation(async (f) => {
       const id = randomUUID(),
-        code = token(),
-        start = { id, code, consent: true, policyVersion: 1, locale: "id" };
+        code = createContinuationCode(),
+        start = {
+          id,
+          code: code.toLowerCase(),
+          consent: true,
+          policyVersion: 1,
+          locale: "id",
+        };
       const before = (
         await rows(caseStore.db, sql`select count(*)::int n from cases`)
       )[0]!.n;
@@ -2152,6 +2158,18 @@ describe("suite privacy and workflow boundaries", () => {
       expect(created.body).not.toContain(code);
       expect(created.json()).not.toHaveProperty("caseCode");
       expect((await f.intake("", start)).json().id).toBe(id);
+      const collision = await f.intake("", {
+        ...start,
+        id: randomUUID(),
+        code: code.replace("-", ""),
+      });
+      expect(collision.statusCode).toBe(409);
+      expect(collision.json().error).toBe("continuation_code_unavailable");
+      expect(
+        (
+          await f.intake("/resume", {}, code.toLowerCase().replace("-", ""))
+        ).json().id,
+      ).toBe(id);
       expect((await f.intake("/" + id, undefined, token())).statusCode).toBe(
         401,
       );
@@ -2222,6 +2240,7 @@ describe("suite privacy and workflow boundaries", () => {
         sql`select * from intakes where id=${id}`,
       );
       expect(JSON.stringify(stored)).not.toContain(code);
+      expect(stored!.token_hash).toBe(mac(shared, `intake-code:${code}`));
       expect(JSON.stringify(stored)).not.toContain("Private identity clue");
       const submission = {
         pin: token(),
@@ -2521,7 +2540,7 @@ describe("suite privacy and workflow boundaries", () => {
   it("releases a private reservation after a real case-write rollback so chat can continue", async () => {
     await withConversation(async (f) => {
       const id = randomUUID(),
-        code = token();
+        code = createContinuationCode();
       await f.intake("", {
         id,
         code,
@@ -2535,7 +2554,7 @@ describe("suite privacy and workflow boundaries", () => {
           "This reviewed report should be safely retried after the database transaction fails.",
         category: "fraud",
         intakeId: id,
-        intakeToken: code,
+        intakeToken: code.toLowerCase().replace("-", ""),
         privacyReviewed: true,
         policyVersion: 1,
       };

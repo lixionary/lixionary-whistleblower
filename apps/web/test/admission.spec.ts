@@ -39,6 +39,7 @@ async function fixture(page: Page, lang: "en" | "id") {
     disabled: false,
     expired: false,
     policy: 1,
+    collisions: 0,
     get code() {
       return code;
     },
@@ -78,6 +79,13 @@ async function fixture(page: Page, lang: "en" | "id") {
       });
     }
     if (path === "/privacy/intake") {
+      if (f.collisions > 0) {
+        f.collisions--;
+        return route.fulfill({
+          status: 409,
+          json: { error: "continuation_code_unavailable" },
+        });
+      }
       code = body.code;
       state.id = body.id;
       state.messages = [
@@ -216,6 +224,86 @@ async function start(page: Page, id: boolean) {
   return assistant;
 }
 
+test("Enter sends, Shift+Enter adds a line, and composition and repeated keys do not send", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    label = (en: string, indo: string) => (id ? indo : en),
+    f = await fixture(page, id ? "id" : "en");
+  await page.goto("/report");
+  const assistant = page.getByRole("region", {
+    name: label("Private reporting assistant", "Asisten pelaporan pribadi"),
+  });
+  const input = assistant.getByLabel(
+    label("Message to assistant", "Pesan untuk asisten"),
+  );
+  await input.fill("First line");
+  await input.press("Enter");
+  expect(f.bodies).toEqual([]);
+  await assistant
+    .getByLabel(
+      label(
+        "I have read the policy and privacy notice.",
+        "Saya telah membaca kebijakan dan pemberitahuan privasi.",
+      ),
+    )
+    .check();
+  await input.press("Enter");
+  expect(f.bodies).toEqual([]);
+  await assistant.getByLabel(/MiniMax/).check();
+  await input.press("End");
+  await input.press("Shift+Enter");
+  await input.pressSequentially("Second line");
+  await expect(input).toHaveValue("First line\nSecond line");
+  expect(f.bodies).toEqual([]);
+  await input.dispatchEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    isComposing: true,
+  });
+  await input.dispatchEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    keyCode: 229,
+  });
+  await input.dispatchEvent("keydown", {
+    key: "Enter",
+    code: "Enter",
+    repeat: true,
+  });
+  expect(f.bodies).toEqual([]);
+  await input.press("Enter");
+  await expect.poll(() => f.bodies.length).toBe(1);
+  expect(f.bodies[0].body).toBe("First line\nSecond line");
+  await expect(input).toHaveValue("");
+  await input.press("Enter");
+  expect(f.bodies).toHaveLength(1);
+});
+
+test("a reserved continuation code is retried without losing the message or draft identity", async ({
+  page,
+}, info) => {
+  const id = info.project.name === "mobile-id",
+    f = await fixture(page, id ? "id" : "en"),
+    attempts: any[] = [];
+  f.collisions = 1;
+  page.on("request", (req) => {
+    if (
+      new URL(req.url()).pathname === "/privacy/intake" &&
+      req.method() === "POST"
+    )
+      attempts.push(req.postDataJSON());
+  });
+  await page.goto("/report");
+  await start(page, id);
+  await expect.poll(() => f.bodies.length).toBe(1);
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0].id).toBe(attempts[1].id);
+  expect(attempts[0].code).not.toBe(attempts[1].code);
+  expect(f.code).toBe(attempts[1].code);
+  await expect(page.getByText(f.code, { exact: true })).toBeVisible();
+});
+
 test("chat first, selected language, private code, editable review, resume and final receipt", async ({
   page,
 }, info) => {
@@ -231,7 +319,7 @@ test("chat first, selected language, private code, editable review, resume and f
   expect(f.bodies).toEqual([]);
   const assistant = await start(page, id);
   await expect(page.getByText(f.code, { exact: true })).toBeVisible();
-  expect(f.code).toHaveLength(43);
+  expect(f.code).toMatch(/^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/);
   await expect(page.locator("dd.case-id")).toHaveCount(0);
   expect(f.submitted).toBeNull();
   await selectLanguage(page, id ? "en" : "id");
@@ -274,7 +362,7 @@ test("chat first, selected language, private code, editable review, resume and f
     .getByLabel(label("Continuation code", "Kode untuk melanjutkan"), {
       exact: true,
     })
-    .fill(code);
+    .fill(code.toLowerCase().replace("-", ""));
   await page
     .getByRole("button", {
       name: label("Continue conversation", "Lanjutkan percakapan"),

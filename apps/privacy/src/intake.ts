@@ -1,4 +1,5 @@
 import { evidenceRoutes } from "./evidence.js";
+import { continuationHash } from "./continuation.js";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -15,7 +16,6 @@ import {
 } from "@whistle/shared";
 import {
   createMinimaxClient,
-  digest,
   mac,
   seal,
   unseal,
@@ -62,9 +62,10 @@ export async function reserveIntake(
   },
 ) {
   await lockIntake(tx, v.intakeId);
+  if (!v.intakeToken) throw new PrivacyError(409, "invalid_intake");
   const [r] = await rows(
     tx,
-    sql`select * from intakes where id=${v.intakeId} and token_hash=${digest(v.intakeToken ?? "")} and revoked_at is null for update`,
+    sql`select * from intakes where id=${v.intakeId} and token_hash=${continuationHash(config, v.intakeToken)} and revoked_at is null for update`,
   );
   if (!r) throw new PrivacyError(409, "invalid_intake");
   if (r.case_id === v.caseId && r.submission_hash === v.submissionHash) return;
@@ -126,7 +127,7 @@ export async function intakeRoutes(app: FastifyInstance) {
     await lockIntake(tx, id);
     const [r] = await rows(
       tx,
-      sql`select * from intakes where id=${id} and token_hash=${digest(code)} and revoked_at is null for update`,
+      sql`select * from intakes where id=${id} and token_hash=${continuationHash(config, code)} and revoked_at is null for update`,
     );
     if (!r) throw new PrivacyError(401, "invalid_intake");
     if (new Date(String(r.created_at)).getTime() <= Date.now() - 86400000)
@@ -209,10 +210,12 @@ export async function intakeRoutes(app: FastifyInstance) {
         await active(tx, v.id, v.code);
         return;
       }
-      await rows(
+      const [created] = await rows(
         tx,
-        sql`insert into intakes(id,token_hash,locale,consent_version,ai_consented,transcript_enc) values(${v.id},${digest(v.code)},${v.locale},${v.policyVersion},${v.consent},${seal([{ role: "assistant", content: intakeGreeting(v.locale) }], config.keys, "intake:" + v.id)})`,
+        sql`insert into intakes(id,token_hash,locale,consent_version,ai_consented,transcript_enc) values(${v.id},${continuationHash(config, v.code)},${v.locale},${v.policyVersion},${v.consent},${seal([{ role: "assistant", content: intakeGreeting(v.locale) }], config.keys, "intake:" + v.id)}) on conflict(token_hash) do nothing returning id`,
       );
+      if (!created)
+        throw new PrivacyError(409, "continuation_code_unavailable");
     });
     return view(v.id, v.code);
   });
@@ -220,7 +223,7 @@ export async function intakeRoutes(app: FastifyInstance) {
     const code = codeFrom(req);
     const [r] = await rows(
       db,
-      sql`select id from intakes where token_hash=${digest(code)}`,
+      sql`select id from intakes where token_hash=${continuationHash(config, code)}`,
     );
     if (!r) throw new PrivacyError(401, "invalid_intake");
     return view(String(r.id), code);

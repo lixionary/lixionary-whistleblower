@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import {
   intakeGreeting,
+  createContinuationCode,
+  continuationCodeSchema,
   type CompanySettings,
   type PrivateIntakeView,
   type IntakeReview,
@@ -30,11 +32,6 @@ export type ActiveIntake = { id: string; code: string };
 // Daily AI allowance per intake (see docs/reporting-flow.md).
 const MESSAGE_LIMIT = 30,
   DRAFT_LIMIT = 3;
-const secret = () =>
-  btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
-    .replaceAll("+", "-")
-    .replaceAll("/", "_")
-    .replace(/=+$/, "");
 export function IntakeChat({
   lang,
   company,
@@ -77,6 +74,7 @@ export function IntakeChat({
     [expired, setExpired] = useState(false),
     [now, setNow] = useState(() => Date.now());
   const creation = useRef<ActiveIntake | null>(null),
+    sendLock = useRef(false),
     request = useRef<{ path: string; payload: unknown } | null>(null);
   const call = <T,>(
     s: ActiveIntake,
@@ -152,19 +150,37 @@ export function IntakeChat({
   async function ensureActive() {
     let s = active;
     if (!s) {
-      creation.current ??= { id: crypto.randomUUID(), code: secret() };
-      s = creation.current;
-      const next = await api<PrivateIntakeView>("/privacy/intake", {
-        method: "POST",
-        body: {
-          ...s,
-          consent,
-          policyVersion: company.version,
-          locale: lang,
-        },
-      }).catch(handle);
-      setCodeSaved(false);
-      adopt(s, next!);
+      creation.current ??= {
+        id: crypto.randomUUID(),
+        code: createContinuationCode(),
+      };
+      for (let attempt = 0; ; attempt++) {
+        s = creation.current;
+        try {
+          const next = await api<PrivateIntakeView>("/privacy/intake", {
+            method: "POST",
+            body: {
+              ...s,
+              consent,
+              policyVersion: company.version,
+              locale: lang,
+            },
+          });
+          setCodeSaved(false);
+          adopt(s, next);
+          break;
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            error.code === "continuation_code_unavailable" &&
+            attempt < 2
+          ) {
+            creation.current = { ...s, code: createContinuationCode() };
+            continue;
+          }
+          await handle(error);
+        }
+      }
     }
     return s;
   }
@@ -196,6 +212,7 @@ export function IntakeChat({
   }
   const aiAvailable = company.aiEnabled && state?.aiEnabled !== false;
   const allowed = policy && consent && aiAvailable && !expired;
+  const canSend = !a.busy && allowed && !!body.trim() && !state?.pending;
   const showConsent = !active || !policy || (aiAvailable && !consent);
   const minutesLeft = state
     ? Math.max(
@@ -558,7 +575,11 @@ export function IntakeChat({
                 className="intake-composer"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  void a.run(send);
+                  if (!canSend || sendLock.current) return;
+                  sendLock.current = true;
+                  void a.run(send).finally(() => {
+                    sendLock.current = false;
+                  });
                 }}
               >
                 <label htmlFor="intake-message" className="sr-only">
@@ -566,10 +587,24 @@ export function IntakeChat({
                 </label>
                 <textarea
                   id="intake-message"
+                  enterKeyHint="send"
                   rows={3}
                   maxLength={4000}
                   value={body}
                   onChange={(e) => setBody(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (
+                      e.key !== "Enter" ||
+                      e.shiftKey ||
+                      e.nativeEvent.isComposing ||
+                      e.keyCode === 229
+                    )
+                      return;
+                    e.preventDefault();
+                    if (canSend && !e.repeat)
+                      e.currentTarget.form?.requestSubmit();
+                  }}
+                  aria-describedby="intake-message-shortcuts"
                   required
                   disabled={a.busy || expired}
                   placeholder={
@@ -633,11 +668,7 @@ export function IntakeChat({
                         {label("Retry AI", "Coba lagi AI")}
                       </button>
                     )}
-                    <button
-                      disabled={
-                        a.busy || !allowed || !body.trim() || !!state?.pending
-                      }
-                    >
+                    <button disabled={!canSend}>
                       <Send size={16} aria-hidden="true" />
                       {a.busy && sending
                         ? label("Please wait…", "Mohon tunggu…")
@@ -645,6 +676,12 @@ export function IntakeChat({
                     </button>
                   </span>
                 </div>
+                <p id="intake-message-shortcuts" className="lx-help">
+                  {label(
+                    "Enter to send · Shift+Enter for a new line.",
+                    "Enter untuk mengirim · Shift+Enter untuk baris baru.",
+                  )}
+                </p>
               </form>
             </div>
           )}
@@ -754,7 +791,14 @@ export function IntakeChat({
                   onSubmit={(e) => {
                     e.preventDefault();
                     void r.run(async () => {
-                      const code = resume.trim();
+                      const parsed = continuationCodeSchema.safeParse(resume);
+                      if (!parsed.success)
+                        throw new ApiError(
+                          401,
+                          "invalid_intake",
+                          "Invalid continuation code",
+                        );
+                      const code = parsed.data;
                       const next = await api<PrivateIntakeView>(
                         "/privacy/intake/resume",
                         {
@@ -772,6 +816,7 @@ export function IntakeChat({
                   <Field
                     label={label("Continuation code", "Kode untuk melanjutkan")}
                     value={resume}
+                    placeholder="ABCD-EFGH"
                     onChange={(e) => setResume(e.target.value)}
                     autoComplete="off"
                     spellCheck={false}

@@ -7,7 +7,7 @@ import postgres from "postgres";
 import sharp from "sharp";
 import { DeleteBucketCommand } from "@aws-sdk/client-s3";
 import { sql } from "drizzle-orm";
-import { defaultSettings } from "@whistle/shared";
+import { defaultSettings, createContinuationCode } from "@whistle/shared";
 import { token } from "@whistle/runtime";
 import { createDb, rows } from "../src/db/client.js";
 import { runMigrations } from "../src/db/migrate.js";
@@ -177,7 +177,7 @@ suite("real Garage evidence lifecycle", () => {
     });
   async function draft() {
     const id = randomUUID(),
-      code = token();
+      code = createContinuationCode();
     expect(
       (
         await call("", {
